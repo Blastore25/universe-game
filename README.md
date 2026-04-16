@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.12` - Fix setup crash from stale `event.currentTarget` in state updaters; debug log off by default and rAF-batched for smooth typing.
 - `v1.3.11` - Setup debug console (in-app + console), global error/rejection capture, and setup input tracing to diagnose startup issues.
 - `v1.3.10` - Setup and simulation are now fully separated; `Universe_Rules.md` synced to strict setup-first start and run-summary CSV behavior.
 - `v1.3.9` - CSV logging switched to run-summary rows (single row per run with in-place updates) for both individual and auto sessions.
@@ -22,6 +23,11 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.12`
+
+- Fixed `TypeError: Cannot read properties of null (reading 'value')` by capturing `event.currentTarget.value` / `.checked` before functional `setSetupDraft` updates (React may run the updater after the event is reset).
+- Setup debug: default off, log buffer flushed via `requestAnimationFrame`, safe value extraction for capture handlers, cancel pending flush on disable/unmount.
 
 ### `v1.3.11`
 

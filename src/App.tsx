@@ -309,6 +309,23 @@ function countArchetypes(particles: Particle[]): Record<ArchetypeKey, number> {
   return counts;
 }
 
+/** Safe string for debug logs; avoids treating labels/sections as inputs. */
+function debugValueFromEventTarget(target: EventTarget | null): string | null {
+  if (!target || !(target instanceof HTMLElement)) {
+    return null;
+  }
+  if (target instanceof HTMLInputElement) {
+    return target.type === "checkbox" ? String(target.checked) : target.value;
+  }
+  if (target instanceof HTMLTextAreaElement) {
+    return target.value;
+  }
+  if (target instanceof HTMLSelectElement) {
+    return target.value;
+  }
+  return null;
+}
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [paused, setPaused] = useState(false);
@@ -338,7 +355,7 @@ function App() {
   const [hudAwake, setHudAwake] = useState(false);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
   const [selectedParticleId, setSelectedParticleId] = useState<number | null>(null);
-  const [setupDebugEnabled, setSetupDebugEnabled] = useState(true);
+  const [setupDebugEnabled, setSetupDebugEnabled] = useState(false);
   const [setupDebugEvents, setSetupDebugEvents] = useState<string[]>([]);
 
   const particlesRef = useRef<Particle[]>([]);
@@ -401,7 +418,9 @@ function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const ambientGainRef = useRef<GainNode | null>(null);
   const ambientNodesRef = useRef<OscillatorNode[]>([]);
-  const setupDebugEnabledRef = useRef(true);
+  const setupDebugEnabledRef = useRef(false);
+  const setupDebugLinesRef = useRef<string[]>([]);
+  const setupDebugFlushRafRef = useRef<number | null>(null);
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -469,16 +488,19 @@ function App() {
   }, []);
 
   const appendSetupDebug = useCallback((message: string) => {
-    if (!setupDebugEnabledRef.current) {
-      return;
-    }
     const timestamp = new Date().toISOString().slice(11, 23);
     const line = `[${timestamp}] ${message}`;
     console.debug(`[setup-debug] ${line}`);
-    setSetupDebugEvents((prev) => {
-      const next = [...prev, line];
-      return next.length > 80 ? next.slice(next.length - 80) : next;
-    });
+    if (!setupDebugEnabledRef.current) {
+      return;
+    }
+    setupDebugLinesRef.current = [...setupDebugLinesRef.current, line].slice(-80);
+    if (setupDebugFlushRafRef.current === null) {
+      setupDebugFlushRafRef.current = window.requestAnimationFrame(() => {
+        setupDebugFlushRafRef.current = null;
+        setSetupDebugEvents([...setupDebugLinesRef.current]);
+      });
+    }
   }, []);
 
   const toCsvCell = useCallback((value: string | number) => {
@@ -870,6 +892,10 @@ function App() {
     return () => {
       window.removeEventListener("error", onWindowError);
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      if (setupDebugFlushRafRef.current !== null) {
+        window.cancelAnimationFrame(setupDebugFlushRafRef.current);
+        setupDebugFlushRafRef.current = null;
+      }
       if (hudDimTimeoutRef.current !== null) {
         window.clearTimeout(hudDimTimeoutRef.current);
       }
@@ -1800,23 +1826,29 @@ function App() {
               }
             }}
             onInputCapture={(event) => {
-              const target = event.target as HTMLInputElement | HTMLTextAreaElement | null;
-              if (!target) {
+              const target = event.target;
+              const value = debugValueFromEventTarget(target);
+              if (value === null) {
                 return;
               }
-              const id = (target as HTMLInputElement).name || target.id || target.tagName;
-              const value =
-                target instanceof HTMLInputElement && target.type === "checkbox" ? String(target.checked) : (target as HTMLInputElement).value;
+              const el = target instanceof HTMLElement ? target : null;
+              const id =
+                el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
+                  ? el.name || el.id || el.tagName
+                  : el?.id || el?.tagName || "unknown";
               appendSetupDebug(`input: ${id}=${value}`);
             }}
             onChangeCapture={(event) => {
-              const target = event.target as HTMLInputElement | HTMLTextAreaElement | null;
-              if (!target) {
+              const target = event.target;
+              const value = debugValueFromEventTarget(target);
+              if (value === null) {
                 return;
               }
-              const id = (target as HTMLInputElement).name || target.id || target.tagName;
-              const value =
-                target instanceof HTMLInputElement && target.type === "checkbox" ? String(target.checked) : (target as HTMLInputElement).value;
+              const el = target instanceof HTMLElement ? target : null;
+              const id =
+                el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
+                  ? el.name || el.id || el.tagName
+                  : el?.id || el?.tagName || "unknown";
               appendSetupDebug(`change: ${id}=${value}`);
             }}
           >
@@ -1828,7 +1860,16 @@ function App() {
                 type="checkbox"
                 checked={setupDebugEnabled}
                 onChange={(event) => {
-                  setSetupDebugEnabled(event.currentTarget.checked);
+                  const checked = event.currentTarget.checked;
+                  setSetupDebugEnabled(checked);
+                  if (!checked) {
+                    if (setupDebugFlushRafRef.current !== null) {
+                      window.cancelAnimationFrame(setupDebugFlushRafRef.current);
+                      setupDebugFlushRafRef.current = null;
+                    }
+                    setupDebugLinesRef.current = [];
+                    setSetupDebugEvents([]);
+                  }
                 }}
               />
             </label>
@@ -1848,12 +1889,13 @@ function App() {
                   type="number"
                   min={0}
                   value={setupDraft.counts.PULSE}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
                     setSetupDraft((prev) => ({
                       ...prev,
-                      counts: { ...prev.counts, PULSE: event.currentTarget.value }
-                    }))
-                  }
+                      counts: { ...prev.counts, PULSE: value }
+                    }));
+                  }}
                 />
               </label>
               <label>
@@ -1863,12 +1905,13 @@ function App() {
                   type="number"
                   min={0}
                   value={setupDraft.counts.BLOOM}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
                     setSetupDraft((prev) => ({
                       ...prev,
-                      counts: { ...prev.counts, BLOOM: event.currentTarget.value }
-                    }))
-                  }
+                      counts: { ...prev.counts, BLOOM: value }
+                    }));
+                  }}
                 />
               </label>
               <label>
@@ -1878,12 +1921,13 @@ function App() {
                   type="number"
                   min={0}
                   value={setupDraft.counts.ECHO}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
                     setSetupDraft((prev) => ({
                       ...prev,
-                      counts: { ...prev.counts, ECHO: event.currentTarget.value }
-                    }))
-                  }
+                      counts: { ...prev.counts, ECHO: value }
+                    }));
+                  }}
                 />
               </label>
               <label>
@@ -1893,12 +1937,13 @@ function App() {
                   type="number"
                   min={0}
                   value={setupDraft.counts.VOID}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
                     setSetupDraft((prev) => ({
                       ...prev,
-                      counts: { ...prev.counts, VOID: event.currentTarget.value }
-                    }))
-                  }
+                      counts: { ...prev.counts, VOID: value }
+                    }));
+                  }}
                 />
               </label>
               <label>
@@ -1908,12 +1953,13 @@ function App() {
                   type="number"
                   min={0}
                   value={setupDraft.counts.AMOR}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
                     setSetupDraft((prev) => ({
                       ...prev,
-                      counts: { ...prev.counts, AMOR: event.currentTarget.value }
-                    }))
-                  }
+                      counts: { ...prev.counts, AMOR: value }
+                    }));
+                  }}
                 />
               </label>
               <label>
@@ -1924,12 +1970,13 @@ function App() {
                   min={100}
                   max={10000}
                   value={setupDraft.maxParticles}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
                     setSetupDraft((prev) => ({
                       ...prev,
-                      maxParticles: event.currentTarget.value
-                    }))
-                  }
+                      maxParticles: value
+                    }));
+                  }}
                 />
               </label>
               <label>
@@ -1938,7 +1985,10 @@ function App() {
                   type="number"
                   step="0.01"
                   value={setupDraft.attractionScale}
-                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, attractionScale: event.currentTarget.value }))}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSetupDraft((prev) => ({ ...prev, attractionScale: value }));
+                  }}
                 />
               </label>
               <label>
@@ -1947,7 +1997,10 @@ function App() {
                   type="number"
                   step="0.001"
                   value={setupDraft.sameTypeRepulsion}
-                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, sameTypeRepulsion: event.currentTarget.value }))}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSetupDraft((prev) => ({ ...prev, sameTypeRepulsion: value }));
+                  }}
                 />
               </label>
               <label>
@@ -1956,7 +2009,10 @@ function App() {
                   type="number"
                   step="0.01"
                   value={setupDraft.amorPairForce}
-                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, amorPairForce: event.currentTarget.value }))}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSetupDraft((prev) => ({ ...prev, amorPairForce: value }));
+                  }}
                 />
               </label>
               <label>
@@ -1965,7 +2021,10 @@ function App() {
                   type="number"
                   min={1}
                   value={setupDraft.influenceTtlBase}
-                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, influenceTtlBase: event.currentTarget.value }))}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSetupDraft((prev) => ({ ...prev, influenceTtlBase: value }));
+                  }}
                 />
               </label>
               <label>
@@ -1974,7 +2033,10 @@ function App() {
                   type="number"
                   min={1}
                   value={setupDraft.influenceTtlExplosionBase}
-                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, influenceTtlExplosionBase: event.currentTarget.value }))}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSetupDraft((prev) => ({ ...prev, influenceTtlExplosionBase: value }));
+                  }}
                 />
               </label>
               <label>
@@ -1983,7 +2045,10 @@ function App() {
                   type="number"
                   min={1}
                   value={setupDraft.lowPopulationThreshold}
-                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, lowPopulationThreshold: event.currentTarget.value }))}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSetupDraft((prev) => ({ ...prev, lowPopulationThreshold: value }));
+                  }}
                 />
               </label>
               <label>
@@ -1994,7 +2059,10 @@ function App() {
                   min={0.05}
                   max={1}
                   value={setupDraft.lowPopulationDeathScale}
-                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, lowPopulationDeathScale: event.currentTarget.value }))}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSetupDraft((prev) => ({ ...prev, lowPopulationDeathScale: value }));
+                  }}
                 />
               </label>
               <label>
@@ -2004,7 +2072,10 @@ function App() {
                   step="0.05"
                   min={0}
                   value={setupDraft.rarityBirthBoost}
-                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, rarityBirthBoost: event.currentTarget.value }))}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSetupDraft((prev) => ({ ...prev, rarityBirthBoost: value }));
+                  }}
                 />
               </label>
               <label>
@@ -2013,7 +2084,10 @@ function App() {
                   type="number"
                   min={1}
                   value={setupDraft.diversityFloor}
-                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, diversityFloor: event.currentTarget.value }))}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSetupDraft((prev) => ({ ...prev, diversityFloor: value }));
+                  }}
                 />
               </label>
               <label>
@@ -2024,7 +2098,10 @@ function App() {
                   min={0}
                   max={0.95}
                   value={setupDraft.loveDeathProtection}
-                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, loveDeathProtection: event.currentTarget.value }))}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setSetupDraft((prev) => ({ ...prev, loveDeathProtection: value }));
+                  }}
                 />
               </label>
               <label className="startup-toggle">
@@ -2032,12 +2109,13 @@ function App() {
                 <input
                   type="checkbox"
                   checked={setupDraft.adaptivePerformanceMode}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const checked = event.currentTarget.checked;
                     setSetupDraft((prev) => ({
                       ...prev,
-                      adaptivePerformanceMode: event.currentTarget.checked
-                    }))
-                  }
+                      adaptivePerformanceMode: checked
+                    }));
+                  }}
                 />
               </label>
               {startupMode === "auto" ? (
@@ -2047,7 +2125,10 @@ function App() {
                     type="number"
                     min={1}
                     value={setupDraft.autoRunTarget}
-                    onChange={(event) => setSetupDraft((prev) => ({ ...prev, autoRunTarget: event.currentTarget.value }))}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      setSetupDraft((prev) => ({ ...prev, autoRunTarget: value }));
+                    }}
                   />
                 </label>
               ) : null}
@@ -2110,7 +2191,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.11</strong>
+            <strong>Universe Game v1.3.12</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
