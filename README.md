@@ -5,12 +5,19 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.1` - Rule-engine expansion (birth/death/special behaviors), post-Big-Bang non-overlap spacing, and tap-to-inspect particle stat cards.
 - `v1.3.0` - Mobile-first vertical controls, touch-friendly pinch+drag camera, adaptive dimming HUD, and per-archetype live counts.
 - `v1.2.1` - Wide zoom, time control, residual frequencies, static HUD, and ambient music polish release.
 - `v1.2.0` - Wide zoom-out universe view, contemplative time controls (0.1x-1000x), and Residual Frequencies with fading reactive trails.
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.1`
+
+- Added explicit archetype interaction matrix and rule-engine passes for births, deaths, sacrifice, absorption, and love-bond behavior.
+- Added post-Big-Bang collision resolution so particles no longer share exact same space after the opening burst.
+- Added tap/click particle inspection card showing per-particle Love, Chaos, Order, Energy, age, and bond information.
 
 ### `v1.3.0`
 
