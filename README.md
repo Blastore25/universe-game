@@ -5,11 +5,20 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.0` - Mobile-first vertical controls, touch-friendly pinch+drag camera, adaptive dimming HUD, and per-archetype live counts.
 - `v1.2.1` - Wide zoom, time control, residual frequencies, static HUD, and ambient music polish release.
 - `v1.2.0` - Wide zoom-out universe view, contemplative time controls (0.1x-1000x), and Residual Frequencies with fading reactive trails.
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.0`
+
+- Added modern vertical `Zoom` and `Time` sliders anchored to the right side for mobile comfort.
+- Made HUD elements semi-transparent by default, with tap-to-focus full opacity and auto-dim after 4 seconds.
+- Added live particle totals per archetype directly in the legend.
+- Improved touch handling so pinch zoom and drag panning work smoothly together on mobile.
+- Preserved the contemplative visual tone while updating controls and glass styling.
 
 ### `v1.2.1`
 
@@ -28,7 +37,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - Residual Frequencies trail system with subtle visual echoes carrying Love, Chaos, Order, and Energy
 - Frequency-driven reactions: attraction, mutation, inspiration, and avoidance
 - Time Flow controls: pause/resume + slider from `0.1x` to `1000x`
-- Mouse camera controls: drag to pan, wheel to zoom
+- Camera controls: drag to pan, wheel to zoom, pinch to zoom on touch
 - Keyboard controls: `Space` (pause), `R` (reset), `H` (toggle help)
 - Live stats panel (total particles, Amor count, FPS)
 
@@ -109,8 +118,8 @@ vercel --prod
 
 ## Controls
 
-- `Drag` (mouse): Move camera
-- `Scroll` wheel: Zoom in/out
+- `Drag` (mouse/touch): Move camera
+- `Pinch` (touch) / `Scroll` wheel: Zoom in/out
 - `Space`: Pause/resume simulation
 - `Time Flow` slider: adjust simulation speed from `0.1x` to `1000x`
 - `R`: Trigger a fresh Big Bang reset

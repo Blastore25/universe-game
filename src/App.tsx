@@ -11,6 +11,7 @@ const TIME_SCALE_MIN = 0.1;
 const TIME_SCALE_MAX = 1000;
 const TIME_SCALE_LOG_MIN = Math.log10(TIME_SCALE_MIN);
 const TIME_SCALE_LOG_MAX = Math.log10(TIME_SCALE_MAX);
+const HUD_DIM_TIMEOUT_MS = 4000;
 
 type ArchetypeKey = "PULSE" | "BLOOM" | "ECHO" | "VOID" | "AMOR";
 
@@ -53,6 +54,11 @@ interface ResidualFrequency {
   ttl: number;
   maxTtl: number;
   color: string;
+}
+
+interface PointerPoint {
+  x: number;
+  y: number;
 }
 
 const ARCHETYPES: Record<ArchetypeKey, Archetype> = {
@@ -109,14 +115,35 @@ function createBigBangParticles(): Particle[] {
   return particles;
 }
 
+function createEmptyArchetypeCounts(): Record<ArchetypeKey, number> {
+  return {
+    PULSE: 0,
+    BLOOM: 0,
+    ECHO: 0,
+    VOID: 0,
+    AMOR: 0
+  };
+}
+
+function countArchetypes(particles: Particle[]): Record<ArchetypeKey, number> {
+  const counts = createEmptyArchetypeCounts();
+  for (const particle of particles) {
+    counts[particle.type] += 1;
+  }
+  return counts;
+}
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [paused, setPaused] = useState(false);
   const [showHelp, setShowHelp] = useState(true);
   const [timeScale, setTimeScale] = useState(1);
+  const [cameraZoom, setCameraZoom] = useState(0.65);
   const [fps, setFps] = useState(0);
   const [particleCount, setParticleCount] = useState(0);
   const [amorCount, setAmorCount] = useState(0);
+  const [archetypeCounts, setArchetypeCounts] = useState<Record<ArchetypeKey, number>>(createEmptyArchetypeCounts);
+  const [hudAwake, setHudAwake] = useState(false);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
 
   const particlesRef = useRef<Particle[]>([]);
@@ -132,6 +159,13 @@ function App() {
     lastX: 0,
     lastY: 0
   });
+  const activePointersRef = useRef<Map<number, PointerPoint>>(new Map());
+  const pinchRef = useRef({
+    isPinching: false,
+    initialDistance: 0,
+    initialZoom: 0.65
+  });
+  const hudDimTimeoutRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const frameCounterRef = useRef(0);
   const lastFpsTimeRef = useRef(performance.now());
@@ -155,10 +189,41 @@ function App() {
     return (Math.log10(timeScale) - TIME_SCALE_LOG_MIN) / (TIME_SCALE_LOG_MAX - TIME_SCALE_LOG_MIN);
   }, [timeScale]);
 
+  const zoomSliderValue = useMemo(() => {
+    return (Math.log10(cameraZoom) - Math.log10(ZOOM_MIN)) / (Math.log10(ZOOM_MAX) - Math.log10(ZOOM_MIN));
+  }, [cameraZoom]);
+
+  const setZoom = useCallback((nextZoom: number) => {
+    const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, nextZoom));
+    cameraRef.current.zoom = clamped;
+    setCameraZoom(clamped);
+  }, []);
+
   const setTimeScaleFromSlider = useCallback((normalized: number) => {
     const nextLog = TIME_SCALE_LOG_MIN + normalized * (TIME_SCALE_LOG_MAX - TIME_SCALE_LOG_MIN);
     const nextScale = 10 ** nextLog;
     setTimeScale(nextScale);
+  }, []);
+
+  const setZoomFromSlider = useCallback(
+    (normalized: number) => {
+      const zoomLogMin = Math.log10(ZOOM_MIN);
+      const zoomLogMax = Math.log10(ZOOM_MAX);
+      const nextLog = zoomLogMin + normalized * (zoomLogMax - zoomLogMin);
+      setZoom(10 ** nextLog);
+    },
+    [setZoom]
+  );
+
+  const wakeHud = useCallback(() => {
+    setHudAwake(true);
+    if (hudDimTimeoutRef.current !== null) {
+      window.clearTimeout(hudDimTimeoutRef.current);
+    }
+    hudDimTimeoutRef.current = window.setTimeout(() => {
+      setHudAwake(false);
+      hudDimTimeoutRef.current = null;
+    }, HUD_DIM_TIMEOUT_MS);
   }, []);
 
   const resetUniverse = useCallback(() => {
@@ -169,6 +234,7 @@ function App() {
     lastFrameTimeRef.current = performance.now();
     setParticleCount(particles.length);
     setAmorCount(particles.filter((particle) => particle.type === "AMOR").length);
+    setArchetypeCounts(countArchetypes(particles));
     setPaused(false);
   }, []);
 
@@ -245,6 +311,9 @@ function App() {
 
   useEffect(() => {
     return () => {
+      if (hudDimTimeoutRef.current !== null) {
+        window.clearTimeout(hudDimTimeoutRef.current);
+      }
       stopAmbientMusic();
       for (const oscillator of ambientNodesRef.current) {
         oscillator.stop();
@@ -292,18 +361,63 @@ function App() {
       canvas.height = window.innerHeight;
     };
 
+    const getPinchDistance = (pointers: PointerPoint[]) => {
+      if (pointers.length < 2) {
+        return 0;
+      }
+      const dx = pointers[1].x - pointers[0].x;
+      const dy = pointers[1].y - pointers[0].y;
+      return Math.hypot(dx, dy);
+    };
+
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
 
     const onPointerDown = (event: PointerEvent) => {
-      dragRef.current.isDragging = true;
-      dragRef.current.lastX = event.clientX;
-      dragRef.current.lastY = event.clientY;
+      activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const activePointers = [...activePointersRef.current.values()];
+      if (activePointers.length >= 2) {
+        pinchRef.current.isPinching = true;
+        pinchRef.current.initialDistance = getPinchDistance(activePointers);
+        pinchRef.current.initialZoom = cameraRef.current.zoom;
+        dragRef.current.isDragging = false;
+      } else {
+        dragRef.current.isDragging = true;
+        dragRef.current.lastX = event.clientX;
+        dragRef.current.lastY = event.clientY;
+      }
       canvas.setPointerCapture(event.pointerId);
     };
 
     const onPointerMove = (event: PointerEvent) => {
+      if (!activePointersRef.current.has(event.pointerId)) {
+        return;
+      }
+
+      activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const activePointers = [...activePointersRef.current.values()];
+
+      if (activePointers.length >= 2) {
+        if (!pinchRef.current.isPinching) {
+          pinchRef.current.isPinching = true;
+          pinchRef.current.initialDistance = getPinchDistance(activePointers);
+          pinchRef.current.initialZoom = cameraRef.current.zoom;
+        }
+
+        const nextDistance = getPinchDistance(activePointers);
+        if (pinchRef.current.initialDistance > 0 && nextDistance > 0) {
+          const pinchScale = nextDistance / pinchRef.current.initialDistance;
+          setZoom(pinchRef.current.initialZoom * pinchScale);
+        }
+        dragRef.current.isDragging = false;
+        return;
+      }
+
+      pinchRef.current.isPinching = false;
       if (!dragRef.current.isDragging) {
+        dragRef.current.isDragging = true;
+        dragRef.current.lastX = event.clientX;
+        dragRef.current.lastY = event.clientY;
         return;
       }
 
@@ -317,7 +431,23 @@ function App() {
     };
 
     const onPointerUp = (event: PointerEvent) => {
-      dragRef.current.isDragging = false;
+      activePointersRef.current.delete(event.pointerId);
+      const remainingPointers = [...activePointersRef.current.values()];
+      if (remainingPointers.length >= 2) {
+        pinchRef.current.initialDistance = getPinchDistance(remainingPointers);
+        pinchRef.current.initialZoom = cameraRef.current.zoom;
+      } else {
+        pinchRef.current.isPinching = false;
+      }
+
+      if (remainingPointers.length === 1) {
+        dragRef.current.isDragging = true;
+        dragRef.current.lastX = remainingPointers[0].x;
+        dragRef.current.lastY = remainingPointers[0].y;
+      } else {
+        dragRef.current.isDragging = false;
+      }
+
       if (canvas.hasPointerCapture(event.pointerId)) {
         canvas.releasePointerCapture(event.pointerId);
       }
@@ -327,7 +457,7 @@ function App() {
       event.preventDefault();
       const factor = event.deltaY > 0 ? 0.9 : 1.12;
       const camera = cameraRef.current;
-      camera.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, camera.zoom * factor));
+      setZoom(camera.zoom * factor);
     };
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -563,6 +693,7 @@ function App() {
         lastFpsTimeRef.current = time;
         setParticleCount(particles.length);
         setAmorCount(particles.filter((particle) => particle.type === "AMOR").length);
+        setArchetypeCounts(countArchetypes(particles));
       }
 
       rafRef.current = window.requestAnimationFrame(drawFrame);
@@ -585,19 +716,28 @@ function App() {
   }, []);
 
   const archetypeLegend = useMemo(
-    () => Object.values(ARCHETYPES).map((archetype) => ({ color: archetype.color, name: archetype.name })),
-    []
+    () =>
+      (Object.entries(ARCHETYPES) as [ArchetypeKey, Archetype][]).map(([key, archetype]) => ({
+        color: archetype.color,
+        name: archetype.name,
+        count: archetypeCounts[key]
+      })),
+    [archetypeCounts]
   );
 
   return (
     <main className="app">
       <canvas ref={canvasRef} className="simulation-canvas" />
 
-      <div className="hud-layer">
+      <div
+        className={`hud-layer ${hudAwake ? "is-awake" : ""}`}
+        onPointerDownCapture={wakeHud}
+        onPointerMoveCapture={wakeHud}
+      >
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.2.1</strong>
+            <strong>Universe Game v1.3.0</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">State: {paused ? "Paused" : "Running"} | Time: {timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</p>
@@ -606,36 +746,77 @@ function App() {
             {archetypeLegend.map((entry) => (
               <span key={entry.name}>
                 <span className="chip" style={{ background: entry.color }} />
-                {entry.name}
+                {entry.name}: {entry.count}
               </span>
             ))}
           </div>
           {showHelp ? (
-            <p className="dim">Drag: pan • Scroll: zoom • Space: pause • R: reset • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance</p>
+            <p className="dim">Drag: pan • Pinch/Scroll: zoom • Space: pause • R: reset • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance</p>
           ) : null}
         </section>
 
         <div className="controls">
-          <button type="button" onClick={() => setPaused((value) => !value)}>
+          <div className="slider-stack">
+            <label className="vertical-control" htmlFor="zoom-control">
+              <span>Zoom</span>
+              <input
+                id="zoom-control"
+                type="range"
+                min={0}
+                max={1}
+                step={0.001}
+                value={zoomSliderValue}
+                onChange={(event) => {
+                  wakeHud();
+                  setZoomFromSlider(Number(event.currentTarget.value));
+                }}
+              />
+              <strong>{cameraZoom.toFixed(cameraZoom < 0.1 ? 3 : 2)}x</strong>
+            </label>
+
+            <label className="vertical-control" htmlFor="time-scale">
+              <span>Time</span>
+              <input
+                id="time-scale"
+                type="range"
+                min={0}
+                max={1}
+                step={0.001}
+                value={sliderValue}
+                onChange={(event) => {
+                  wakeHud();
+                  setTimeScaleFromSlider(Number(event.currentTarget.value));
+                }}
+              />
+              <strong>{timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</strong>
+            </label>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              wakeHud();
+              setPaused((value) => !value);
+            }}
+          >
             {paused ? "Resume" : "Pause"}
           </button>
-          <button type="button" onClick={() => void toggleAmbientMusic()}>
+          <button
+            type="button"
+            onClick={() => {
+              wakeHud();
+              void toggleAmbientMusic();
+            }}
+          >
             {isMusicPlaying ? "Pause Ambient" : "Play Ambient"}
           </button>
-          <label className="time-control" htmlFor="time-scale">
-            <span>Time Flow</span>
-            <input
-              id="time-scale"
-              type="range"
-              min={0}
-              max={1}
-              step={0.001}
-              value={sliderValue}
-              onChange={(event) => setTimeScaleFromSlider(Number(event.currentTarget.value))}
-            />
-            <strong>{timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</strong>
-          </label>
-          <button type="button" onClick={resetUniverse}>
+          <button
+            type="button"
+            onClick={() => {
+              wakeHud();
+              resetUniverse();
+            }}
+          >
             Big Bang Reset
           </button>
         </div>

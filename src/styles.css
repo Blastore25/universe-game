@@ -32,6 +32,7 @@ body {
   inset: 0;
   z-index: 8;
   pointer-events: none;
+  --hud-opacity: 0.56;
 }
 
 .simulation-canvas {
@@ -55,6 +56,8 @@ body {
   font-size: 13px;
   line-height: 1.4;
   pointer-events: auto;
+  opacity: var(--hud-opacity);
+  transition: opacity 220ms ease;
 }
 
 .title-row {
@@ -97,21 +100,28 @@ body {
   right: 16px;
   top: 16px;
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
-  max-width: min(520px, calc(100vw - 32px));
+  max-width: min(260px, calc(100vw - 32px));
   pointer-events: auto;
+  opacity: var(--hud-opacity);
+  transition: opacity 220ms ease;
+}
+
+.hud-layer.is-awake {
+  --hud-opacity: 1;
 }
 
 button {
   border: 1px solid rgba(183, 175, 255, 0.35);
-  background: rgba(12, 12, 36, 0.78);
+  background: linear-gradient(180deg, rgba(36, 29, 90, 0.85), rgba(18, 18, 52, 0.88));
   color: #f5f4ff;
   padding: 8px 12px;
   border-radius: 10px;
   font-size: 12px;
   cursor: pointer;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
 }
 
 button:hover {
@@ -123,36 +133,73 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
-.time-control {
-  display: grid;
-  grid-template-columns: auto minmax(180px, 260px) auto;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid rgba(183, 175, 255, 0.35);
-  background: rgba(12, 12, 36, 0.78);
-  color: #f5f4ff;
-  padding: 7px 10px;
-  border-radius: 10px;
-  font-size: 12px;
-  min-height: 34px;
+.slider-stack {
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: 10px;
 }
 
-.time-control span {
+.vertical-control {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 74px;
+  border: 1px solid rgba(183, 175, 255, 0.35);
+  background: linear-gradient(180deg, rgba(38, 29, 94, 0.83), rgba(14, 14, 42, 0.9));
+  color: #f5f4ff;
+  padding: 10px 8px;
+  border-radius: 14px;
+  font-size: 11px;
+  box-shadow: 0 8px 28px rgba(4, 2, 16, 0.35);
+}
+
+.vertical-control span {
   color: #cdc9f8;
   letter-spacing: 0.02em;
+  font-size: 10px;
+  text-transform: uppercase;
 }
 
-.time-control strong {
+.vertical-control strong {
   color: #efe9ff;
   min-width: 40px;
-  text-align: right;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
-.time-control input[type="range"] {
-  width: 100%;
+.vertical-control input[type="range"] {
+  width: 132px;
+  height: 32px;
+  margin: 52px 0;
+  transform: rotate(-90deg);
+  transform-origin: center;
   accent-color: #a78bfa;
   cursor: pointer;
+  border-radius: 999px;
+}
+
+@media (max-width: 700px) {
+  .panel {
+    max-width: min(300px, calc(100vw - 32px));
+  }
+
+  .controls {
+    right: 10px;
+    top: 10px;
+    gap: 6px;
+  }
+
+  button {
+    padding: 7px 10px;
+    font-size: 11px;
+  }
+
+  .vertical-control {
+    width: 70px;
+    padding: 8px 6px;
+  }
 }
 
 @keyframes pulse {
