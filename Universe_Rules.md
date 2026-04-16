@@ -1,6 +1,6 @@
 # Universe Game - Fundamental Rules (Current Implementation)
 
-**Version:** `v1.3.15`
+**Version:** `v1.3.16`
 
 This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 
@@ -71,7 +71,7 @@ Rules are probabilistic and proximity-based (not deterministic cellular automata
 These are **different ideas**:
 
 - **Stable universe (ecological / design concept):** a universe where populations **oscillate** through ongoing births and deaths—growing and decaying in waves (for example **sinusoidal** or cyclic dynamics) while the system keeps regulating itself. The app does **not** auto-detect this pattern yet; it is the qualitative target for “living” dynamics.
-- **Static Universe (implemented detection):** after the explosion phase, if **total particle count** and **non-Amor particle count** both stay **exactly unchanged** (same integers) for **2000 sim seconds** of accumulated simulation time, the run is treated as **frozen at the population level**. The simulation pauses, CSV records `status=static` and `static_seconds`, and the same overlay / auto-advance flow as extinction applies (individual: restart; auto: next run after one second when applicable).
+- **Static Universe (implemented detection):** after the explosion phase, if **total particle count** and **non-Amor particle count** both stay **exactly unchanged** (same integers) for **2000 sim seconds** of accumulated simulation time, the run is treated as **frozen at the population level**. The simulation pauses, the session Markdown log records `static` status and static sim time in the run metrics table, and the same overlay / auto-advance flow as extinction applies (individual: restart; auto: next run after one second when applicable).
 
 ## Residual Traces: Visual vs Influence (Decoupled)
 
@@ -106,27 +106,22 @@ HUD includes:
 - sim timer (scales with Time control) and extinction / static-universe timestamps when triggered
 - phase state and residual count
 - workload indicators (substeps/frame and interaction checks/s)
-- session export status (CSV + optional Markdown log)
+- session export status (Markdown session log)
 
 During setup, an optional **Setup Debug Console** (off by default) logs input/change events and captures `window.error` / `unhandledrejection` so startup issues can be diagnosed from the UI. Log lines are batched to the next animation frame so typing stays responsive.
 
-## Session export (CSV + Markdown)
+## Session export (Markdown)
 
-When the browser supports the File System Access API, session start opens **two save dialogs in order**: first the **`.csv`** (machine-friendly), then a **`.md`** human-readable session log. You can cancel the second dialog and keep CSV-only.
+When the browser supports the File System Access API, session start opens **one** save dialog for a **`.md`** session log. If you cancel or the API is unavailable, run summaries still accumulate in memory for the session, but nothing is written to disk.
 
-**Same update cadence:** whenever run summaries are flushed to disk, **both** files are rewritten in full from the current in-memory summaries (small files, keeps implementation simple and avoids RAM growth).
+**Update cadence:** whenever run summaries are flushed, the Markdown file is **rewritten in full** from the current in-memory summaries (small files, keeps implementation simple and avoids RAM growth).
 
-### CSV
+### Run summaries in the log
 
-- **Run-summary rows (not event rows):** one evolving row per run.
-- **Individual mode:** one row for the current universe run, updated at checkpoints / extinction / static universe.
-- **Auto mode:** one row per tested universe run, each updated through that run lifecycle.
-- Columns include `status` (`ongoing` / `extinct` / `static`), `extinction_seconds`, and `static_seconds` (whichever applies), plus tunable parameters and telemetry fields.
-
-### Markdown (`.md`)
-
-- One document per session with a **## Run N** section per run.
-- Tables spell out metrics, brief history, and the parameter block in plain language so you can skim results without parsing CSV.
+- **Individual mode:** one **## Run N** section for the current universe run, updated at checkpoints / extinction / static universe.
+- **Auto mode:** one **## Run N** section per tested universe run, each updated through that run lifecycle.
+- **Status** in the metrics table is `ongoing`, `extinct`, or `static`, with extinction and static sim times when applicable, plus tunable parameters and telemetry fields in tables.
+- **Brief history** lines capture checkpoint-style population/residual peaks; skim metrics tables for structured values.
 
 ---
 

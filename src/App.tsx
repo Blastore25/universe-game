@@ -136,14 +136,14 @@ interface RunSummary {
   config: SessionConfig;
 }
 
-/** Human-readable session document; mirrors `runSummariesRef` data written to CSV on each flush. */
+/** Human-readable session document from `runSummariesRef`; rewritten in full on each flush. */
 function buildSessionMarkdownDoc(runs: RunSummary[], sessionIdFallback: string): string {
   const lines: string[] = [];
   const sid = runs.length > 0 ? runs[0].sessionId : sessionIdFallback;
 
   lines.push("# Universe Game — session log");
   lines.push("");
-  lines.push("This file is the **same run-summary data** as the companion `.csv`, rewritten in full on each save so it stays easy to read in any editor.");
+  lines.push("Run summaries are **rewritten in full** on each save so the file stays easy to read in any editor (small documents, no unbounded RAM growth).");
   lines.push("");
   lines.push("| | |");
   lines.push("|---|---|");
@@ -430,7 +430,7 @@ function App() {
   const [staticUniverseSeconds, setStaticUniverseSeconds] = useState<number | null>(null);
   const [autoRestartCountdown, setAutoRestartCountdown] = useState<number | null>(null);
   const [autoRunCompleted, setAutoRunCompleted] = useState(0);
-  const [csvStatus, setCsvStatus] = useState("No file selected");
+  const [sessionExportStatus, setSessionExportStatus] = useState("No file selected");
   const [archetypeCounts, setArchetypeCounts] = useState<Record<ArchetypeKey, number>>(createEmptyArchetypeCounts);
   const [hudAwake, setHudAwake] = useState(false);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
@@ -472,9 +472,6 @@ function App() {
   const currentRunIndexRef = useRef(0);
   const sessionIdRef = useRef<string>("");
   const nextCheckpointStepRef = useRef(CHECKPOINT_INTERVAL_STEPS);
-  const csvFileHandleRef = useRef<FileSystemFileHandle | null>(null);
-  const csvWriteChainRef = useRef<Promise<void>>(Promise.resolve());
-  const csvFallbackRowsRef = useRef<string[]>([]);
   const markdownFileHandleRef = useRef<FileSystemFileHandle | null>(null);
   const markdownWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const runSummariesRef = useRef<Map<number, RunSummary>>(new Map());
@@ -589,15 +586,7 @@ function App() {
     }
   }, []);
 
-  const toCsvCell = useCallback((value: string | number) => {
-    const str = String(value);
-    if (str.includes(",") || str.includes("\"") || str.includes("\n")) {
-      return `"${str.replace(/"/g, "\"\"")}"`;
-    }
-    return str;
-  }, []);
-
-  const flushMarkdownSummaries = useCallback(() => {
+  const flushSessionMarkdown = useCallback(() => {
     const runs = [...runSummariesRef.current.values()].sort((a, b) => a.runIndex - b.runIndex);
     const content = buildSessionMarkdownDoc(runs, sessionIdRef.current);
     const handle = markdownFileHandleRef.current;
@@ -610,102 +599,6 @@ function App() {
       await writable.close();
     });
   }, []);
-
-  const toSummaryRow = useCallback(
-    (summary: RunSummary) =>
-      [
-        summary.sessionId,
-        summary.mode,
-        summary.runIndex,
-        summary.status,
-        summary.simSeconds.toFixed(3),
-        summary.extinctionSeconds === null ? "" : summary.extinctionSeconds.toFixed(3),
-        summary.staticSimSeconds === null ? "" : summary.staticSimSeconds.toFixed(3),
-        summary.particlesInitial,
-        summary.particlesPeak,
-        summary.nonAmorMin,
-        summary.nonAmorMax,
-        summary.nonAmorCurrent,
-        summary.residualPeak,
-        summary.checkpointCount,
-        summary.historyBrief,
-        summary.config.counts.PULSE,
-        summary.config.counts.BLOOM,
-        summary.config.counts.ECHO,
-        summary.config.counts.VOID,
-        summary.config.counts.AMOR,
-        summary.config.maxParticles,
-        summary.config.attractionScale,
-        summary.config.sameTypeRepulsion,
-        summary.config.amorPairForce,
-        summary.config.influenceTtlBase,
-        summary.config.influenceTtlExplosionBase,
-        summary.config.lowPopulationThreshold,
-        summary.config.lowPopulationDeathScale,
-        summary.config.rarityBirthBoost,
-        summary.config.diversityFloor,
-        summary.config.loveDeathProtection,
-        summary.config.adaptivePerformanceMode ? 1 : 0
-      ]
-        .map(toCsvCell)
-        .join(","),
-    [toCsvCell]
-  );
-
-  const flushCsvSummaries = useCallback(() => {
-    const header = [
-      "session_id",
-      "mode",
-      "run_index",
-      "status",
-      "sim_seconds",
-      "extinction_seconds",
-      "static_seconds",
-      "particles_initial",
-      "particles_peak",
-      "non_amor_min",
-      "non_amor_max",
-      "non_amor_current",
-      "residual_peak",
-      "checkpoint_count",
-      "history_brief",
-      "count_pulse",
-      "count_bloom",
-      "count_echo",
-      "count_void",
-      "count_amor",
-      "max_particles",
-      "attraction_scale",
-      "same_type_repulsion",
-      "amor_pair_force",
-      "influence_ttl_base",
-      "influence_ttl_explosion_base",
-      "low_population_threshold",
-      "low_population_death_scale",
-      "rarity_birth_boost",
-      "diversity_floor",
-      "love_death_protection",
-      "adaptive_performance_mode"
-    ].join(",");
-    const lines = [header];
-    const runs = [...runSummariesRef.current.values()].sort((a, b) => a.runIndex - b.runIndex);
-    for (const run of runs) {
-      lines.push(toSummaryRow(run));
-    }
-    const content = `${lines.join("\n")}\n`;
-    const handle = csvFileHandleRef.current;
-    if (!handle) {
-      csvFallbackRowsRef.current = lines;
-      return;
-    }
-    csvWriteChainRef.current = csvWriteChainRef.current.then(async () => {
-      const writable = await handle.createWritable();
-      await writable.write(content);
-      await writable.close();
-    });
-
-    flushMarkdownSummaries();
-  }, [flushMarkdownSummaries, toSummaryRow]);
 
   const upsertRunSummary = useCallback(
     (patch: Partial<RunSummary> & { runIndex: number }) => {
@@ -740,8 +633,8 @@ function App() {
       historyBrief: "initializing",
       config
     });
-    flushCsvSummaries();
-  }, [flushCsvSummaries]);
+    flushSessionMarkdown();
+  }, [flushSessionMarkdown]);
 
   const updateCurrentRunSummary = useCallback(
     (
@@ -781,9 +674,9 @@ function App() {
         next.historyBrief = `[${endKind}] nonAmor[min:${next.nonAmorMin},max:${next.nonAmorMax},last:${next.nonAmorCurrent}] peakParticles:${next.particlesPeak} peakResiduals:${next.residualPeak}`;
       }
       runSummariesRef.current.set(currentRunIndexRef.current, next);
-      flushCsvSummaries();
+      flushSessionMarkdown();
     },
-    [flushCsvSummaries]
+    [flushSessionMarkdown]
   );
 
   const randomConfig = useCallback((): SessionConfig => {
@@ -907,41 +800,27 @@ function App() {
     setIsMusicPlaying(true);
   }, [ensureAmbientMusic, isMusicPlaying, stopAmbientMusic]);
 
-  const openSessionCsv = useCallback(async (mode: SessionMode) => {
+  const openSessionMarkdown = useCallback(async (mode: SessionMode) => {
     sessionIdRef.current = `${mode}-${new Date().toISOString().replace(/:/g, "-")}`;
-    csvFallbackRowsRef.current = [];
     runSummariesRef.current.clear();
-    csvFileHandleRef.current = null;
     markdownFileHandleRef.current = null;
     markdownWriteChainRef.current = Promise.resolve();
     try {
       const picker = (window as unknown as { showSaveFilePicker?: Function }).showSaveFilePicker;
       if (!picker) {
-        setCsvStatus("File picker unsupported; summary logging in-memory fallback");
+        setSessionExportStatus("File picker unsupported; session summaries in memory only");
         return;
       }
       const handle = await picker({
-        suggestedName: `${sessionIdRef.current}.csv`,
-        types: [{ description: "CSV", accept: { "text/csv": [".csv"] } }]
+        suggestedName: `${sessionIdRef.current}.md`,
+        types: [{ description: "Markdown", accept: { "text/markdown": [".md"], "text/plain": [".md"] } }]
       });
-      csvFileHandleRef.current = handle as FileSystemFileHandle;
-      csvWriteChainRef.current = Promise.resolve();
-      let mdNote = "";
-      try {
-        const mdHandle = await picker({
-          suggestedName: `${sessionIdRef.current}.md`,
-          types: [{ description: "Markdown", accept: { "text/markdown": [".md"], "text/plain": [".md"] } }]
-        });
-        markdownFileHandleRef.current = mdHandle as FileSystemFileHandle;
-        markdownWriteChainRef.current = Promise.resolve();
-        mdNote = ` + ${sessionIdRef.current}.md`;
-      } catch {
-        markdownFileHandleRef.current = null;
-        mdNote = " (Markdown save skipped)";
-      }
-      setCsvStatus(`Saving session to ${sessionIdRef.current}.csv${mdNote}`);
+      markdownFileHandleRef.current = handle as FileSystemFileHandle;
+      markdownWriteChainRef.current = Promise.resolve();
+      setSessionExportStatus(`Saving session log to ${sessionIdRef.current}.md`);
     } catch {
-      setCsvStatus("CSV save cancelled; summary logging in-memory fallback");
+      markdownFileHandleRef.current = null;
+      setSessionExportStatus("Session log save cancelled; summaries in memory only");
     }
   }, []);
 
@@ -1001,7 +880,7 @@ function App() {
   const startSession = useCallback(
     async (mode: SessionMode, baseConfig: SessionConfig, autoRuns: number) => {
       appendSetupDebug(`startSession begin: mode=${mode}, autoRuns=${autoRuns}`);
-      await openSessionCsv(mode);
+      await openSessionMarkdown(mode);
       setSetupOpen(false);
       setSessionMode(mode);
       setAutoRunCompleted(0);
@@ -1017,7 +896,7 @@ function App() {
       initRunSummary(mode, currentRunIndexRef.current, runConfig);
       appendSetupDebug("startSession complete");
     },
-    [appendSetupDebug, initRunSummary, openSessionCsv, randomConfig, resetUniverse]
+    [appendSetupDebug, initRunSummary, openSessionMarkdown, randomConfig, resetUniverse]
   );
 
   useEffect(() => {
@@ -1050,7 +929,6 @@ function App() {
         void audioContextRef.current.close();
         audioContextRef.current = null;
       }
-      csvFileHandleRef.current = null;
       markdownFileHandleRef.current = null;
       if (autoRestartTimeoutRef.current !== null) {
         window.clearTimeout(autoRestartTimeoutRef.current);
@@ -2064,7 +1942,7 @@ function App() {
             }}
           >
             <h2>Choose Session Mode</h2>
-            <p>Configure parameters before the first Big Bang. Session start opens save dialogs for CSV and a readable Markdown log (Markdown optional).</p>
+            <p>Configure parameters before the first Big Bang. Session start opens one save dialog for a Markdown session log (`.md`).</p>
             <label className="startup-toggle">
               <span>Setup debug log</span>
               <input
@@ -2402,12 +2280,12 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.15</strong>
+            <strong>Universe Game v1.3.16</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
           <p className="dim">Adaptive Performance: {currentConfigRef.current.adaptivePerformanceMode ? "On" : "Off"}</p>
-          <p className="dim">Session export: {csvStatus}</p>
+          <p className="dim">Session export: {sessionExportStatus}</p>
           {sessionMode === "auto" ? <p className="dim">Auto progress: {autoRunCompleted}/{autoRunTargetRef.current}</p> : null}
           <p className="dim">State: {paused ? "Paused" : "Running"} | Time: {timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</p>
           <p className="dim">World: {WORLD_SIZE} x {WORLD_SIZE} (wrap)</p>
