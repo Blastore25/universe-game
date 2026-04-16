@@ -42,6 +42,77 @@ body {
   touch-action: none;
 }
 
+.startup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 14;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 4, 18, 0.66);
+  backdrop-filter: blur(4px);
+}
+
+.startup-card {
+  width: min(520px, calc(100vw - 24px));
+  border: 1px solid rgba(170, 160, 255, 0.35);
+  background: rgba(10, 10, 28, 0.9);
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
+}
+
+.startup-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.startup-card p {
+  margin: 0;
+  color: #cec9f4;
+  font-size: 13px;
+}
+
+.startup-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.startup-mode-toggle {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.startup-mode-toggle .is-active {
+  border-color: rgba(236, 72, 153, 0.8);
+}
+
+.startup-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.startup-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #d2cef4;
+  font-size: 11px;
+}
+
+.startup-grid input {
+  border: 1px solid rgba(183, 175, 255, 0.35);
+  background: rgba(18, 18, 52, 0.8);
+  color: #f5f4ff;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
 .panel {
   position: absolute;
   top: 16px;

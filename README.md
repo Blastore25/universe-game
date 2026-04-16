@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.4` - Startup session configurator, decoupled 2-second visual traces vs configurable influence, and incremental CSV session logging with auto-run checkpoints.
 - `v1.3.3` - Simulation timer/extinction analytics, larger wrap-around universe, live workload metrics, and hot-loop allocation optimizations.
 - `v1.3.2` - Big Bang explosion-only first second, stronger residual history trimming, and HUD phase/residual debug line.
 - `v1.3.1` - Rule-engine expansion (birth/death/special behaviors), post-Big-Bang non-overlap spacing, and tap-to-inspect particle stat cards.
@@ -14,6 +15,12 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.4`
+
+- Added a pre-start session setup screen with mode selection, configurable particle/rule parameters, and auto-run count control.
+- Decoupled residual trace visibility from influence so visuals fade after 2 sim-seconds while influence keeps configurable energy-based persistence.
+- Added CSV session logging with save prompt, run-start/checkpoint/extinction rows, and automatic logging across randomized auto-runs.
 
 ### `v1.3.3`
 

@@ -14,6 +14,7 @@ const TIME_SCALE_LOG_MAX = Math.log10(TIME_SCALE_MAX);
 const HUD_DIM_TIMEOUT_MS = 4000;
 
 type ArchetypeKey = "PULSE" | "BLOOM" | "ECHO" | "VOID" | "AMOR";
+type SessionMode = "individual" | "auto";
 
 interface Archetype {
   name: string;
@@ -55,8 +56,10 @@ interface ResidualFrequency {
   chaos: number;
   order: number;
   energy: number;
-  ttl: number;
-  maxTtl: number;
+  visualTtl: number;
+  maxVisualTtl: number;
+  influenceTtl: number;
+  maxInfluenceTtl: number;
   color: string;
 }
 
@@ -81,7 +84,6 @@ const BIG_BANG_COUNTS: Record<ArchetypeKey, number> = {
   AMOR: 12
 };
 
-const MAX_PARTICLES = 1200;
 const LOVE_BOND_DISTANCE = 34;
 const LOVE_BOND_THRESHOLD = 80;
 const BASE_INTERACTION_DISTANCE = 130;
@@ -90,6 +92,28 @@ const OVERLAP_CELL_SIZE = 24;
 const EXPLOSION_PHASE_STEPS = 60;
 const MAX_RESIDUALS_SOFT = 1800;
 const MAX_RESIDUALS_HARD = 2400;
+const VISUAL_TRACE_TTL_STEPS = 120;
+const CHECKPOINT_INTERVAL_STEPS = 300;
+
+interface SessionConfig {
+  counts: Record<ArchetypeKey, number>;
+  maxParticles: number;
+  attractionScale: number;
+  sameTypeRepulsion: number;
+  amorPairForce: number;
+  influenceTtlBase: number;
+  influenceTtlExplosionBase: number;
+}
+
+const DEFAULT_SESSION_CONFIG: SessionConfig = {
+  counts: { ...BIG_BANG_COUNTS },
+  maxParticles: 1200,
+  attractionScale: 1,
+  sameTypeRepulsion: 0.03,
+  amorPairForce: 0.22,
+  influenceTtlBase: 170,
+  influenceTtlExplosionBase: 110
+};
 
 const ATTRACTION_MATRIX: Record<ArchetypeKey, Partial<Record<ArchetypeKey, number>>> = {
   PULSE: { BLOOM: 0.09, AMOR: 0.12, ECHO: -0.08, VOID: -0.06 },
@@ -113,11 +137,11 @@ function clampStat(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
-function forceForPair(a: ArchetypeKey, b: ArchetypeKey): number {
+function forceForPair(a: ArchetypeKey, b: ArchetypeKey, config: SessionConfig): number {
   if (a === b) {
-    return -0.03;
+    return -config.sameTypeRepulsion;
   }
-  return ATTRACTION_MATRIX[a][b] ?? 0;
+  return (ATTRACTION_MATRIX[a][b] ?? 0) * config.attractionScale;
 }
 
 function nearbyCount(nearbyCounts: Uint16Array, particleIndex: number, archetype: ArchetypeKey): number {
@@ -169,13 +193,13 @@ function spawnParticle(x: number, y: number, type: ArchetypeKey): Particle {
   };
 }
 
-function createBigBangParticles(): Particle[] {
+function createBigBangParticles(counts: Record<ArchetypeKey, number>): Particle[] {
   const particles: Particle[] = [];
   const centerX = WORLD_SIZE / 2;
   const centerY = WORLD_SIZE / 2;
 
-  for (const type of Object.keys(BIG_BANG_COUNTS) as ArchetypeKey[]) {
-    const count = BIG_BANG_COUNTS[type];
+  for (const type of Object.keys(counts) as ArchetypeKey[]) {
+    const count = counts[type];
     for (let i = 0; i < count; i += 1) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 2.2 + Math.random() * 2.8;
@@ -212,6 +236,11 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [paused, setPaused] = useState(false);
   const [showHelp, setShowHelp] = useState(true);
+  const [startupMode, setStartupMode] = useState<SessionMode>("individual");
+  const [pendingConfig, setPendingConfig] = useState<SessionConfig>(DEFAULT_SESSION_CONFIG);
+  const [autoRunTarget, setAutoRunTarget] = useState(10);
+  const [sessionMode, setSessionMode] = useState<SessionMode | null>(null);
+  const [hasStartedSession, setHasStartedSession] = useState(false);
   const [timeScale, setTimeScale] = useState(1);
   const [cameraZoom, setCameraZoom] = useState(0.65);
   const [fps, setFps] = useState(0);
@@ -225,6 +254,8 @@ function App() {
   const [extinctionSeconds, setExtinctionSeconds] = useState<number | null>(null);
   const [extinctionCount, setExtinctionCount] = useState(0);
   const [extinctionAvgSeconds, setExtinctionAvgSeconds] = useState<number | null>(null);
+  const [autoRunCompleted, setAutoRunCompleted] = useState(0);
+  const [csvStatus, setCsvStatus] = useState("No file selected");
   const [archetypeCounts, setArchetypeCounts] = useState<Record<ArchetypeKey, number>>(createEmptyArchetypeCounts);
   const [hudAwake, setHudAwake] = useState(false);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
@@ -256,7 +287,16 @@ function App() {
   const hudDimTimeoutRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const selectedParticleIdRef = useRef<number | null>(null);
+  const sessionModeRef = useRef<SessionMode | null>(null);
   const frameCounterRef = useRef(0);
+  const currentConfigRef = useRef<SessionConfig>(DEFAULT_SESSION_CONFIG);
+  const autoRunTargetRef = useRef(0);
+  const currentRunIndexRef = useRef(0);
+  const sessionIdRef = useRef<string>("");
+  const nextCheckpointStepRef = useRef(CHECKPOINT_INTERVAL_STEPS);
+  const csvWriterRef = useRef<WritableStreamDefaultWriter<string> | null>(null);
+  const csvWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  const csvFallbackRowsRef = useRef<string[]>([]);
   const extinctionRecordedRef = useRef(false);
   const extinctionCountRef = useRef(0);
   const extinctionAvgRef = useRef<number | null>(null);
@@ -289,6 +329,10 @@ function App() {
   useEffect(() => {
     selectedParticleIdRef.current = selectedParticleId;
   }, [selectedParticleId]);
+
+  useEffect(() => {
+    sessionModeRef.current = sessionMode;
+  }, [sessionMode]);
 
   const sliderValue = useMemo(() => {
     return (Math.log10(timeScale) - TIME_SCALE_LOG_MIN) / (TIME_SCALE_LOG_MAX - TIME_SCALE_LOG_MIN);
@@ -331,9 +375,79 @@ function App() {
     }, HUD_DIM_TIMEOUT_MS);
   }, []);
 
-  const resetUniverse = useCallback(() => {
+  const toCsvCell = useCallback((value: string | number) => {
+    const str = String(value);
+    if (str.includes(",") || str.includes("\"") || str.includes("\n")) {
+      return `"${str.replace(/"/g, "\"\"")}"`;
+    }
+    return str;
+  }, []);
+
+  const enqueueCsvLine = useCallback((line: string) => {
+    const writer = csvWriterRef.current;
+    if (!writer) {
+      csvFallbackRowsRef.current.push(line);
+      return;
+    }
+    csvWriteChainRef.current = csvWriteChainRef.current.then(async () => {
+      await writer.write(`${line}\n`);
+    });
+  }, []);
+
+  const logRunEvent = useCallback(
+    (event: "run_start" | "checkpoint" | "extinction", simSeconds: number, particlesNow: number, residualsNow: number) => {
+      const cfg = currentConfigRef.current;
+      const row = [
+        sessionIdRef.current,
+        sessionModeRef.current ?? "unknown",
+        currentRunIndexRef.current,
+        event,
+        simSeconds.toFixed(3),
+        particlesNow,
+        residualsNow,
+        cfg.counts.PULSE,
+        cfg.counts.BLOOM,
+        cfg.counts.ECHO,
+        cfg.counts.VOID,
+        cfg.counts.AMOR,
+        cfg.maxParticles,
+        cfg.attractionScale,
+        cfg.sameTypeRepulsion,
+        cfg.amorPairForce,
+        cfg.influenceTtlBase,
+        cfg.influenceTtlExplosionBase
+      ]
+        .map(toCsvCell)
+        .join(",");
+      enqueueCsvLine(row);
+    },
+    [enqueueCsvLine, toCsvCell]
+  );
+
+  const randomConfig = useCallback((): SessionConfig => {
+    const randInt = (min: number, max: number) => Math.floor(min + Math.random() * (max - min + 1));
+    const randFloat = (min: number, max: number) => min + Math.random() * (max - min);
+    return {
+      counts: {
+        PULSE: randInt(20, 90),
+        BLOOM: randInt(20, 110),
+        ECHO: randInt(20, 95),
+        VOID: randInt(10, 70),
+        AMOR: randInt(4, 26)
+      },
+      maxParticles: randInt(600, 2200),
+      attractionScale: randFloat(0.55, 1.7),
+      sameTypeRepulsion: randFloat(0.012, 0.07),
+      amorPairForce: randFloat(0.14, 0.34),
+      influenceTtlBase: randInt(120, 420),
+      influenceTtlExplosionBase: randInt(80, 220)
+    };
+  }, []);
+
+  const resetUniverse = useCallback((config: SessionConfig) => {
     nextParticleId = 1;
-    const particles = createBigBangParticles();
+    currentConfigRef.current = config;
+    const particles = createBigBangParticles(config.counts);
     particlesRef.current = particles;
     residualsRef.current = [];
     residualAccumulatorRef.current = 0;
@@ -418,9 +532,72 @@ function App() {
     setIsMusicPlaying(true);
   }, [ensureAmbientMusic, isMusicPlaying, stopAmbientMusic]);
 
-  useEffect(() => {
-    resetUniverse();
-  }, [resetUniverse]);
+  const openSessionCsv = useCallback(async (mode: SessionMode) => {
+    sessionIdRef.current = `${mode}-${new Date().toISOString().replace(/:/g, "-")}`;
+    csvFallbackRowsRef.current = [];
+    const header = [
+      "session_id",
+      "mode",
+      "run_index",
+      "event",
+      "sim_seconds",
+      "particles",
+      "residuals",
+      "count_pulse",
+      "count_bloom",
+      "count_echo",
+      "count_void",
+      "count_amor",
+      "max_particles",
+      "attraction_scale",
+      "same_type_repulsion",
+      "amor_pair_force",
+      "influence_ttl_base",
+      "influence_ttl_explosion_base"
+    ].join(",");
+
+    try {
+      const picker = (window as unknown as { showSaveFilePicker?: Function }).showSaveFilePicker;
+      if (!picker) {
+        setCsvStatus("File picker unsupported; logging in-memory fallback");
+        enqueueCsvLine(header);
+        return;
+      }
+      const handle = await picker({
+        suggestedName: `${sessionIdRef.current}.csv`,
+        types: [{ description: "CSV", accept: { "text/csv": [".csv"] } }]
+      });
+      const writable: FileSystemWritableFileStream = await handle.createWritable();
+      const writer = writable.getWriter();
+      csvWriterRef.current = writer;
+      csvWriteChainRef.current = Promise.resolve();
+      setCsvStatus(`Saving to ${sessionIdRef.current}.csv`);
+      enqueueCsvLine(header);
+    } catch {
+      setCsvStatus("CSV save cancelled; logging in-memory fallback");
+      enqueueCsvLine(header);
+    }
+  }, [enqueueCsvLine]);
+
+  const startSession = useCallback(
+    async (mode: SessionMode) => {
+      await openSessionCsv(mode);
+      setSessionMode(mode);
+      setHasStartedSession(true);
+      setAutoRunCompleted(0);
+      extinctionCountRef.current = 0;
+      extinctionAvgRef.current = null;
+      setExtinctionCount(0);
+      setExtinctionAvgSeconds(null);
+      autoRunTargetRef.current = mode === "auto" ? Math.max(1, autoRunTarget) : 1;
+      currentRunIndexRef.current = 1;
+      const runConfig = mode === "auto" ? randomConfig() : pendingConfig;
+      resetUniverse(runConfig);
+      nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+      logRunEvent("run_start", 0, 0, 0);
+    },
+    [autoRunTarget, logRunEvent, openSessionCsv, pendingConfig, randomConfig, resetUniverse]
+  );
 
   useEffect(() => {
     return () => {
@@ -436,6 +613,13 @@ function App() {
         void audioContextRef.current.close();
         audioContextRef.current = null;
       }
+      if (csvWriterRef.current) {
+        const writer = csvWriterRef.current;
+        csvWriterRef.current = null;
+        void csvWriteChainRef.current.then(async () => {
+          await writer.close();
+        });
+      }
     };
   }, [stopAmbientMusic]);
 
@@ -446,7 +630,10 @@ function App() {
         event.preventDefault();
         setPaused((value) => !value);
       } else if (key === "r") {
-        resetUniverse();
+        resetUniverse(currentConfigRef.current);
+        currentRunIndexRef.current += 1;
+        nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+        logRunEvent("run_start", 0, 0, 0);
       } else if (key === "h") {
         setShowHelp((value) => !value);
       }
@@ -456,7 +643,7 @@ function App() {
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [resetUniverse]);
+  }, [logRunEvent, resetUniverse]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -615,7 +802,7 @@ function App() {
       const frameDeltaMs = Math.min(100, Math.max(8, time - lastFrameTimeRef.current));
       lastFrameTimeRef.current = time;
 
-      ctx.fillStyle = "rgba(10, 10, 31, 0.12)";
+      ctx.fillStyle = "rgba(10, 10, 31, 1)";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       if (!pausedRef.current) {
@@ -715,9 +902,9 @@ function App() {
               if (inExplosionPhase) {
                 force = -0.18;
               } else {
-                force = forceForPair(particle.type, other.type);
+                force = forceForPair(particle.type, other.type, currentConfigRef.current);
                 if (particle.bondId !== null && particle.bondId === other.id) {
-                  force = 0.22;
+                  force = currentConfigRef.current.amorPairForce;
                 }
               }
               ax += (dx / dist) * force;
@@ -770,7 +957,10 @@ function App() {
                   }
 
                   const dist = Math.sqrt(distSq);
-                  const influence = residual.ttl / residual.maxTtl;
+                  if (residual.influenceTtl <= 0) {
+                    continue;
+                  }
+                  const influence = residual.influenceTtl / residual.maxInfluenceTtl;
                   const dirX = dx / dist;
                   const dirY = dy / dist;
                   if (!inExplosionPhase) {
@@ -812,7 +1002,10 @@ function App() {
             residualAccumulatorRef.current += stepScale;
             if (residualAccumulatorRef.current >= RESIDUAL_EMIT_INTERVAL) {
               residualAccumulatorRef.current = 0;
-              const ttlBase = inExplosionPhase ? 110 : 170;
+              const visualTtlBase = VISUAL_TRACE_TTL_STEPS;
+              const influenceBase =
+                (inExplosionPhase ? currentConfigRef.current.influenceTtlExplosionBase : currentConfigRef.current.influenceTtlBase) +
+                particle.energy;
               residuals.push({
                 x: particle.x,
                 y: particle.y,
@@ -822,8 +1015,10 @@ function App() {
                 chaos: particle.chaos,
                 order: particle.order,
                 energy: particle.energy,
-                ttl: ttlBase + particle.energy,
-                maxTtl: ttlBase + particle.energy,
+                visualTtl: visualTtlBase,
+                maxVisualTtl: visualTtlBase,
+                influenceTtl: influenceBase,
+                maxInfluenceTtl: influenceBase,
                 color: particle.archetype.color
               });
             }
@@ -928,8 +1123,8 @@ function App() {
             }
           }
 
-          if (particlesToSpawn.length > 0 && particles.length < MAX_PARTICLES) {
-            const room = Math.max(0, MAX_PARTICLES - particles.length);
+          if (particlesToSpawn.length > 0 && particles.length < currentConfigRef.current.maxParticles) {
+            const room = Math.max(0, currentConfigRef.current.maxParticles - particles.length);
             for (let i = 0; i < Math.min(room, particlesToSpawn.length); i += 1) {
               particles.push(particlesToSpawn[i]);
             }
@@ -999,8 +1194,9 @@ function App() {
           }
 
           for (let i = residuals.length - 1; i >= 0; i -= 1) {
-            residuals[i].ttl -= 1 * stepScale;
-            if (residuals[i].ttl <= 0) {
+            residuals[i].visualTtl -= 1 * stepScale;
+            residuals[i].influenceTtl -= 1 * stepScale;
+            if (residuals[i].visualTtl <= 0 && residuals[i].influenceTtl <= 0) {
               residuals.splice(i, 1);
             }
           }
@@ -1019,7 +1215,10 @@ function App() {
       ctx.lineCap = "round";
       for (let i = 0; i < residuals.length; i += 1) {
         const residual = residuals[i];
-        const life = residual.ttl / residual.maxTtl;
+        if (residual.visualTtl <= 0) {
+          continue;
+        }
+        const life = residual.visualTtl / residual.maxVisualTtl;
         const alpha = 0.03 + life * 0.1;
         const screenX = (residual.x - camera.x) * camera.zoom + canvas.width / 2;
         const screenY = (residual.y - camera.y) * camera.zoom + canvas.height / 2;
@@ -1093,6 +1292,10 @@ function App() {
       frameCounterRef.current += 1;
       if (time - lastFpsTimeRef.current >= 1000) {
         const runSeconds = simulationStepsRef.current / 60;
+        while (simulationStepsRef.current >= nextCheckpointStepRef.current && particles.length > 0) {
+          logRunEvent("checkpoint", runSeconds, particles.length, residuals.length);
+          nextCheckpointStepRef.current += CHECKPOINT_INTERVAL_STEPS;
+        }
         if (particles.length === 0 && !extinctionRecordedRef.current) {
           extinctionRecordedRef.current = true;
           setExtinctionSeconds(runSeconds);
@@ -1103,6 +1306,18 @@ function App() {
           extinctionAvgRef.current = nextAvg;
           setExtinctionCount(nextCount);
           setExtinctionAvgSeconds(nextAvg);
+          logRunEvent("extinction", runSeconds, 0, residuals.length);
+          if (sessionMode === "auto" && currentRunIndexRef.current < autoRunTargetRef.current) {
+            currentRunIndexRef.current += 1;
+            setAutoRunCompleted(currentRunIndexRef.current - 1);
+            const nextConfig = randomConfig();
+            resetUniverse(nextConfig);
+            nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+            logRunEvent("run_start", 0, 0, 0);
+          } else if (sessionMode === "auto") {
+            setAutoRunCompleted(currentRunIndexRef.current);
+            setPaused(true);
+          }
         }
         setFps(frameCounterRef.current);
         frameCounterRef.current = 0;
@@ -1160,9 +1375,12 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.3</strong>
+            <strong>Universe Game v1.3.4</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
+          <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
+          <p className="dim">CSV: {csvStatus}</p>
+          {sessionMode === "auto" ? <p className="dim">Auto progress: {autoRunCompleted}/{autoRunTargetRef.current}</p> : null}
           <p className="dim">State: {paused ? "Paused" : "Running"} | Time: {timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</p>
           <p className="dim">World: {WORLD_SIZE} x {WORLD_SIZE} (wrap)</p>
           <p className="dim">
@@ -1250,13 +1468,195 @@ function App() {
             type="button"
             onClick={() => {
               wakeHud();
-              resetUniverse();
+              currentRunIndexRef.current += 1;
+              resetUniverse(currentConfigRef.current);
+              nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+              logRunEvent("run_start", 0, 0, 0);
             }}
           >
             Big Bang Reset
           </button>
         </div>
       </div>
+
+      {!hasStartedSession ? (
+        <div className="startup-overlay">
+          <section className="startup-card">
+            <h2>Choose Session Mode</h2>
+            <p>Configure parameters before the first Big Bang. CSV save prompt appears at start.</p>
+            <div className="startup-mode-toggle">
+              <button type="button" onClick={() => setStartupMode("individual")} className={startupMode === "individual" ? "is-active" : ""}>
+                Individual
+              </button>
+              <button type="button" onClick={() => setStartupMode("auto")} className={startupMode === "auto" ? "is-active" : ""}>
+                Auto
+              </button>
+            </div>
+            <div className="startup-grid">
+              <label>
+                Pulse
+                <input
+                  type="number"
+                  min={0}
+                  value={pendingConfig.counts.PULSE}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      counts: { ...prev.counts, PULSE: Math.max(0, Math.floor(Number(event.currentTarget.value) || 0)) }
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Bloom
+                <input
+                  type="number"
+                  min={0}
+                  value={pendingConfig.counts.BLOOM}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      counts: { ...prev.counts, BLOOM: Math.max(0, Math.floor(Number(event.currentTarget.value) || 0)) }
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Echo
+                <input
+                  type="number"
+                  min={0}
+                  value={pendingConfig.counts.ECHO}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      counts: { ...prev.counts, ECHO: Math.max(0, Math.floor(Number(event.currentTarget.value) || 0)) }
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Void
+                <input
+                  type="number"
+                  min={0}
+                  value={pendingConfig.counts.VOID}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      counts: { ...prev.counts, VOID: Math.max(0, Math.floor(Number(event.currentTarget.value) || 0)) }
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Amor
+                <input
+                  type="number"
+                  min={0}
+                  value={pendingConfig.counts.AMOR}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      counts: { ...prev.counts, AMOR: Math.max(0, Math.floor(Number(event.currentTarget.value) || 0)) }
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Max particles
+                <input
+                  type="number"
+                  min={100}
+                  value={pendingConfig.maxParticles}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      maxParticles: Math.max(100, Math.floor(Number(event.currentTarget.value) || 100))
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Attraction scale
+                <input
+                  type="number"
+                  step="0.01"
+                  value={pendingConfig.attractionScale}
+                  onChange={(event) => setPendingConfig((prev) => ({ ...prev, attractionScale: Math.max(0, Number(event.currentTarget.value) || 0) }))}
+                />
+              </label>
+              <label>
+                Same-type repulsion
+                <input
+                  type="number"
+                  step="0.001"
+                  value={pendingConfig.sameTypeRepulsion}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({ ...prev, sameTypeRepulsion: Math.max(0, Number(event.currentTarget.value) || 0) }))
+                  }
+                />
+              </label>
+              <label>
+                Bond pull force
+                <input
+                  type="number"
+                  step="0.01"
+                  value={pendingConfig.amorPairForce}
+                  onChange={(event) => setPendingConfig((prev) => ({ ...prev, amorPairForce: Math.max(0, Number(event.currentTarget.value) || 0) }))}
+                />
+              </label>
+              <label>
+                Influence TTL base
+                <input
+                  type="number"
+                  min={1}
+                  value={pendingConfig.influenceTtlBase}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({ ...prev, influenceTtlBase: Math.max(1, Math.floor(Number(event.currentTarget.value) || 1)) }))
+                  }
+                />
+              </label>
+              <label>
+                Influence TTL explosion base
+                <input
+                  type="number"
+                  min={1}
+                  value={pendingConfig.influenceTtlExplosionBase}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      influenceTtlExplosionBase: Math.max(1, Math.floor(Number(event.currentTarget.value) || 1))
+                    }))
+                  }
+                />
+              </label>
+              {startupMode === "auto" ? (
+                <label>
+                  Auto runs
+                  <input
+                    type="number"
+                    min={1}
+                    value={autoRunTarget}
+                    onChange={(event) => setAutoRunTarget(Math.max(1, Math.floor(Number(event.currentTarget.value) || 1)))}
+                  />
+                </label>
+              ) : null}
+            </div>
+            <div className="startup-actions">
+              <button
+                type="button"
+                onClick={async () => {
+                  wakeHud();
+                  await startSession(startupMode);
+                }}
+              >
+                Start {startupMode === "individual" ? "Individual Session" : "Auto Mode"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
