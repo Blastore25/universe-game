@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.5` - Updated English universe rules documentation synced to runtime behavior and experiment workflow.
 - `v1.3.4` - Startup session configurator, decoupled 2-second visual traces vs configurable influence, and incremental CSV session logging with auto-run checkpoints.
 - `v1.3.3` - Simulation timer/extinction analytics, larger wrap-around universe, live workload metrics, and hot-loop allocation optimizations.
 - `v1.3.2` - Big Bang explosion-only first second, stronger residual history trimming, and HUD phase/residual debug line.
@@ -15,6 +16,10 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.5`
+
+- Rewrote `Universe_Rules.md` in English and aligned it with the latest implementation details (session modes, residual split, telemetry, and CSV experiment logging).
 
 ### `v1.3.4`
 

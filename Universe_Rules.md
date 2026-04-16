@@ -1,33 +1,111 @@
-# Universe Game - Reglas Fundamentales
+# Universe Game - Fundamental Rules (Current Implementation)
 
-**Versión con Amor como fuerza fundamental** 💖
+**Version:** `v1.3.5`
 
-## Tabla de Arquetipos y Reglas
+This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 
-| Archetype   | Color      | Core Traits                        | Attraction Rules                              | Repulsion Rules                          | Birth (Strong)                          | Birth (Weak)                              | Death Rules                                      | Special Behavior |
-|-------------|------------|------------------------------------|-----------------------------------------------|------------------------------------------|-----------------------------------------|-------------------------------------------|--------------------------------------------------|------------------|
-| **Pulse**   | Red        | High Energy, Chaos, Speed          | Strong to Bloom and Amor                      | Strong to Echo and Void                  | 2 Pulse + 1 Bloom = New Pulse          | Near Bloom = small chance                 | Disappears if no interaction for long time      | Can explode and release particles |
-| **Bloom**   | Green      | Growth, Life, Stability            | Strong to Pulse, Echo and Amor                | Weak to Void                             | 2 Bloom + 1 Echo = New Bloom           | Near Echo = chance to duplicate           | Dies if surrounded by too much Void              | Can bloom and create small particles |
-| **Echo**    | Blue       | Order, Memory, Structure           | Strong to Bloom and Amor                      | Strong to Pulse and Void                 | 3 Echo together = New Echo             | Near Bloom = creates stable structures    | Disappears if Chaos level is too high            | Forms geometric stable structures |
-| **Void**    | Purple     | Chaos, Transformation, Entropy     | Strong to Pulse                               | Repels almost everything                 | 1 Void + 2 Pulse = New Void            | Near any = small chance of mutation       | Naturally evaporates over time                   | Can absorb nearby particles |
-| **Amor**    | Pink/Gold  | Connection, Sacrifice, Harmony     | Strong attraction to **all** archetypes       | Very low repulsion                       | 2 high-Love + 1 compatible = New (bonus) | Slowly increases Love in nearby particles | Sacrifices itself to save others                 | Creates **permanent bonds**, heals nearby particles |
+## Core Archetypes
 
-### Reglas Generales del Amor
+| Archetype | Color | Core Identity |
+|---|---|---|
+| `Pulse` | Red | Energy, speed, volatility |
+| `Bloom` | Green | Growth, life, stability |
+| `Echo` | Blue | Order, memory, structure |
+| `Void` | Purple | Entropy, mutation, absorption |
+| `Amor` | Pink | Connection, healing, sacrifice |
 
-- **El Amor es la fuerza más poderosa pero más rara**.
-- Las partículas acumulan un valor de "Amor" con el tiempo según sus interacciones positivas.
-- **Vínculos de Amor**: Dos partículas con alto Amor pueden unirse permanentemente y protegerse.
-- El Amor puede **transformar Void (caos) en Bloom (vida)**.
-- Partículas con **0 Amor** durante mucho tiempo desaparecen más rápido (balance).
-- Cadenas de Amor crean estructuras complejas y estables (sociedades, criaturas, galaxias emocionales).
+## Initial Universe Structure
+
+Default starting counts (editable at session start):
+
+- `Pulse`: 35
+- `Bloom`: 65
+- `Echo`: 55
+- `Void`: 28
+- `Amor`: 12
+
+## Session Modes
+
+- **Individual session:** one configured universe at a time (manual reset available).
+- **Auto mode:** randomized parameter set per run; each run advances automatically after extinction until target run count is reached.
+
+## Big Bang and Phase Timing
+
+- Simulation does **not** auto-start on app load.
+- User selects mode and parameters first.
+- Run starts with a **Big Bang explosion phase** (~1 sim second) where pairwise rule behavior is temporarily simplified to outward expansion.
+- After explosion phase, full interaction rules apply.
+
+## Force and Interaction Model
+
+- Pairwise force matrix defines cross-archetype attraction/repulsion tendencies.
+- Same-type interactions have configurable repulsion.
+- Love bonds can form between high-love particles and create stronger pair pull behavior.
+- Amor interactions can increase nearby love/energy.
+- Void interactions can absorb/kill nearby non-void particles in close-range conditions.
+
+### Tunable force parameters
+
+- `attractionScale`
+- `sameTypeRepulsion`
+- `amorPairForce`
+
+## Birth, Mutation, and Death Dynamics
+
+Rules are probabilistic and proximity-based (not deterministic cellular automata):
+
+- Archetype-specific birth conditions (Pulse/Bloom/Echo/Void/Amor variants).
+- Chaos/energy mutation pressure via residual influence.
+- Death pathways include inactivity, chaos overload, void pressure, low-love decay, and sacrifice logic.
+- Void-to-Bloom transformation can occur under high-love conditions.
+
+## Residual Traces: Visual vs Influence (Decoupled)
+
+Residuals now have two separate lifetimes:
+
+- **Visual trace lifetime:** fixed at `2 sim seconds` (fades from view quickly).
+- **Influence lifetime:** energy-based and configurable, persists after visual fade.
+
+Influence TTL formulas:
+
+- Normal phase: `influenceTTL = influenceTtlBase + particle.energy`
+- Explosion phase: `influenceTTL = influenceTtlExplosionBase + particle.energy`
+
+This allows invisible historical influence fields to continue shaping motion after visible traces disappear.
+
+## World Topology
+
+- World size is large and wrap-around (toroidal).
+- Crossing any boundary re-enters from the opposite edge.
+
+## Collision/Overlap Policy
+
+- Short grace period right after Big Bang.
+- After grace period, particles are separation-resolved so they can cluster/touch but not occupy identical space.
+- Love-bonded pairs may remain slightly closer than ordinary pairs.
+
+## Runtime Telemetry and Experiment Support
+
+HUD includes:
+
+- particle totals and archetype counts
+- sim timer and extinction metrics
+- phase state and residual count
+- workload indicators (substeps/frame and interaction checks/s)
+- session mode and CSV logging status
+
+## CSV Experiment Logging
+
+At session start, the app prompts for a CSV save target (when browser supports File System Access API).
+
+Logged event types:
+
+- `run_start`
+- periodic `checkpoint`
+- `extinction`
+
+Each row stores run metadata, key tunable parameters, and runtime metrics for later analysis.
 
 ---
 
-**Archivo CSV creado**: `universe-game/Universe_Rules.csv`  
-Puedes descargarlo y abrirlo directamente en Excel o Google Sheets. Es mucho más cómodo de leer y editar.
-
----
-
-¿Te gusta esta versión, Blastore? ¿Quieres que ajuste alguna regla, agreguemos más columnas, o empecemos a programar el prototipo en 2D ya?
-
-Estoy lista para seguir refinando o pasar a código cuando tú digas 💫
+Reference table file: `Universe_Rules.csv`
