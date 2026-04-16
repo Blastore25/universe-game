@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.7` - Startup overlay stability hardening and visual universe boundary with black outside-space rendering.
 - `v1.3.6` - Durable per-row CSV writes, adaptive performance controls, non-extinguishable Amor semantics, and extinction event restart overlays.
 - `v1.3.5` - Updated English universe rules documentation synced to runtime behavior and experiment workflow.
 - `v1.3.4` - Startup session configurator, decoupled 2-second visual traces vs configurable influence, and incremental CSV session logging with auto-run checkpoints.
@@ -17,6 +18,11 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.7`
+
+- Hardened startup setup overlay state and event isolation to prevent accidental disappearance while editing parameters.
+- Added explicit in-world universe boundary guide and black rendering outside the square universe limits.
 
 ### `v1.3.6`
 

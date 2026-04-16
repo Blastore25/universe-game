@@ -257,7 +257,6 @@ function App() {
   const [pendingConfig, setPendingConfig] = useState<SessionConfig>(DEFAULT_SESSION_CONFIG);
   const [autoRunTarget, setAutoRunTarget] = useState(10);
   const [sessionMode, setSessionMode] = useState<SessionMode | null>(null);
-  const [hasStartedSession, setHasStartedSession] = useState(false);
   const [timeScale, setTimeScale] = useState(1);
   const [cameraZoom, setCameraZoom] = useState(0.65);
   const [fps, setFps] = useState(0);
@@ -631,7 +630,6 @@ function App() {
     async (mode: SessionMode) => {
       await openSessionCsv(mode);
       setSessionMode(mode);
-      setHasStartedSession(true);
       setAutoRunCompleted(0);
       extinctionCountRef.current = 0;
       extinctionAvgRef.current = null;
@@ -679,7 +677,7 @@ function App() {
           return;
         }
       }
-      if (!hasStartedSession) {
+      if (sessionModeRef.current === null) {
         return;
       }
       const key = event.key.toLowerCase();
@@ -700,7 +698,7 @@ function App() {
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [hasStartedSession, logRunEvent, resetUniverse]);
+  }, [logRunEvent, resetUniverse]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -859,8 +857,17 @@ function App() {
       const frameDeltaMs = Math.min(100, Math.max(8, time - lastFrameTimeRef.current));
       lastFrameTimeRef.current = time;
 
-      ctx.fillStyle = "rgba(10, 10, 31, 1)";
+      const boundaryLeft = (0 - camera.x) * camera.zoom + canvas.width / 2;
+      const boundaryTop = (0 - camera.y) * camera.zoom + canvas.height / 2;
+      const boundarySize = WORLD_SIZE * camera.zoom;
+
+      // Outside universe space is black.
+      ctx.fillStyle = "#000000";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Inside universe area keeps the simulation background tone.
+      ctx.fillStyle = "rgba(10, 10, 31, 1)";
+      ctx.fillRect(boundaryLeft, boundaryTop, boundarySize, boundarySize);
 
       if (!pausedRef.current) {
         const frameScale = (frameDeltaMs / 16.666) * timeScaleRef.current;
@@ -1365,6 +1372,14 @@ function App() {
       }
       ctx.restore();
 
+      // World boundary guide: visual square for universe limits.
+      ctx.save();
+      ctx.strokeStyle = "rgba(167, 139, 250, 0.45)";
+      ctx.lineWidth = Math.max(1, camera.zoom * 2);
+      ctx.setLineDash([8, 8]);
+      ctx.strokeRect(boundaryLeft, boundaryTop, boundarySize, boundarySize);
+      ctx.restore();
+
       for (let i = 0; i < particles.length; i += 1) {
         const particle = particles[i];
         const screenX = (particle.x - camera.x) * camera.zoom + canvas.width / 2;
@@ -1530,7 +1545,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.6</strong>
+            <strong>Universe Game v1.3.7</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
@@ -1657,10 +1672,16 @@ function App() {
         </div>
       ) : null}
 
-      {!hasStartedSession ? (
+      {sessionMode === null ? (
         <div className="startup-overlay">
           <section
             className="startup-card"
+            onPointerDownCapture={(event) => {
+              event.stopPropagation();
+            }}
+            onWheelCapture={(event) => {
+              event.stopPropagation();
+            }}
             onKeyDownCapture={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
