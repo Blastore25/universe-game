@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.2` - Big Bang explosion-only first second, stronger residual history trimming, and HUD phase/residual debug line.
 - `v1.3.1` - Rule-engine expansion (birth/death/special behaviors), post-Big-Bang non-overlap spacing, and tap-to-inspect particle stat cards.
 - `v1.3.0` - Mobile-first vertical controls, touch-friendly pinch+drag camera, adaptive dimming HUD, and per-archetype live counts.
 - `v1.2.1` - Wide zoom, time control, residual frequencies, static HUD, and ambient music polish release.
@@ -12,6 +13,12 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.2`
+
+- Added a strict first-second Big Bang explosion phase where attraction/rule processing is paused and particles expand outward.
+- Added stronger residual-history cleanup with soft/hard caps to keep memory and CPU growth bounded over time.
+- Added HUD diagnostics for current phase (Explosion/Rules Active) and live residual count.
 
 ### `v1.3.1`
 

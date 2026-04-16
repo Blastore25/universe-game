@@ -87,6 +87,9 @@ const LOVE_BOND_THRESHOLD = 80;
 const BASE_INTERACTION_DISTANCE = 130;
 const NO_OVERLAP_DELAY_STEPS = 60;
 const OVERLAP_CELL_SIZE = 24;
+const EXPLOSION_PHASE_STEPS = 60;
+const MAX_RESIDUALS_SOFT = 1800;
+const MAX_RESIDUALS_HARD = 2400;
 
 const ATTRACTION_MATRIX: Record<ArchetypeKey, Partial<Record<ArchetypeKey, number>>> = {
   PULSE: { BLOOM: 0.09, AMOR: 0.12, ECHO: -0.08, VOID: -0.06 },
@@ -156,8 +159,8 @@ function createBigBangParticles(): Particle[] {
       const speed = 2.2 + Math.random() * 2.8;
       const dist = 35 + Math.random() * 95;
       const particle = spawnParticle(centerX + Math.cos(angle) * dist, centerY + Math.sin(angle) * dist, type);
-      particle.vx = Math.cos(angle) * speed;
-      particle.vy = Math.sin(angle) * speed;
+      particle.vx = Math.cos(angle) * speed * 1.45;
+      particle.vy = Math.sin(angle) * speed * 1.45;
       particles.push(particle);
     }
   }
@@ -192,6 +195,8 @@ function App() {
   const [fps, setFps] = useState(0);
   const [particleCount, setParticleCount] = useState(0);
   const [amorCount, setAmorCount] = useState(0);
+  const [residualCount, setResidualCount] = useState(0);
+  const [explosionPhaseActive, setExplosionPhaseActive] = useState(true);
   const [archetypeCounts, setArchetypeCounts] = useState<Record<ArchetypeKey, number>>(createEmptyArchetypeCounts);
   const [hudAwake, setHudAwake] = useState(false);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
@@ -297,6 +302,8 @@ function App() {
     setSelectedParticleId(null);
     setParticleCount(particles.length);
     setAmorCount(particles.filter((particle) => particle.type === "AMOR").length);
+    setResidualCount(0);
+    setExplosionPhaseActive(true);
     setArchetypeCounts(countArchetypes(particles));
     setPaused(false);
   }, []);
@@ -574,6 +581,7 @@ function App() {
         const stepScale = frameScale / subSteps;
 
         for (let step = 0; step < subSteps; step += 1) {
+          const inExplosionPhase = simulationStepsRef.current <= EXPLOSION_PHASE_STEPS;
           const residualGrid = new Map<string, number[]>();
           for (let i = 0; i < residuals.length; i += 1) {
             const residual = residuals[i];
@@ -625,25 +633,42 @@ function App() {
               nearbyTypeCounts[i][other.type] += 1;
               interactionCounts[i] += 1;
 
-              if (particle.type === "AMOR" && dist < 80) {
+              if (!inExplosionPhase && particle.type === "AMOR" && dist < 80) {
                 other.love = clampStat(other.love + 0.18 * stepScale);
                 other.energy = clampStat(other.energy + 0.08 * stepScale);
               }
 
-              if (particle.type === "VOID" && other.type !== "VOID" && dist < 18 && Math.random() < 0.0038 * stepScale) {
+              if (
+                !inExplosionPhase &&
+                particle.type === "VOID" &&
+                other.type !== "VOID" &&
+                dist < 18 &&
+                Math.random() < 0.0038 * stepScale
+              ) {
                 particlesToRemove.add(other.id);
                 particle.energy = clampStat(particle.energy + 6);
                 particle.chaos = clampStat(particle.chaos + 2);
               }
 
-              let force = forceForPair(particle.type, other.type);
-              if (particle.bondId !== null && particle.bondId === other.id) {
-                force = 0.22;
+              let force = 0;
+              if (inExplosionPhase) {
+                force = -0.18;
+              } else {
+                force = forceForPair(particle.type, other.type);
+                if (particle.bondId !== null && particle.bondId === other.id) {
+                  force = 0.22;
+                }
               }
               ax += (dx / dist) * force;
               ay += (dy / dist) * force;
 
-              if (particle.type === "VOID" && other.type === "BLOOM" && particle.love > 74 && Math.random() < 0.0018 * stepScale) {
+              if (
+                !inExplosionPhase &&
+                particle.type === "VOID" &&
+                other.type === "BLOOM" &&
+                particle.love > 74 &&
+                Math.random() < 0.0018 * stepScale
+              ) {
                 particle.type = "BLOOM";
                 particle.archetype = ARCHETYPES.BLOOM;
                 particle.radius = ARCHETYPES.BLOOM.size;
@@ -652,6 +677,7 @@ function App() {
               }
 
               if (
+                !inExplosionPhase &&
                 particle.bondId === null &&
                 other.bondId === null &&
                 particle.love >= LOVE_BOND_THRESHOLD &&
@@ -686,20 +712,22 @@ function App() {
                   const influence = residual.ttl / residual.maxTtl;
                   const dirX = dx / dist;
                   const dirY = dy / dist;
-                  ax += dirX * ((residual.love / 100) * 0.028 + (residual.order / 100) * 0.014) * influence;
-                  ay += dirY * ((residual.love / 100) * 0.028 + (residual.order / 100) * 0.014) * influence;
+                  if (!inExplosionPhase) {
+                    ax += dirX * ((residual.love / 100) * 0.028 + (residual.order / 100) * 0.014) * influence;
+                    ay += dirY * ((residual.love / 100) * 0.028 + (residual.order / 100) * 0.014) * influence;
+                  }
 
                   const avoidance = (residual.chaos / 100) * 0.026 * influence;
                   ax -= dirX * avoidance;
                   ay -= dirY * avoidance;
 
-                  if (Math.random() < (residual.chaos / 1000) * influence) {
+                  if (!inExplosionPhase && Math.random() < (residual.chaos / 1000) * influence) {
                     particle.chaos = clampStat(particle.chaos + (Math.random() - 0.5) * 7);
                     particle.order = clampStat(particle.order + (Math.random() - 0.5) * 5);
                     particle.energy = clampStat(particle.energy + (Math.random() - 0.5) * 8);
                   }
 
-                  if (Math.random() < (residual.energy / 1600) * influence) {
+                  if (!inExplosionPhase && Math.random() < (residual.energy / 1600) * influence) {
                     particle.vx += dirX * 0.07;
                     particle.vy += dirY * 0.07;
                   }
@@ -707,7 +735,7 @@ function App() {
               }
             }
 
-            const damping = Math.max(0.82, 0.96 - particle.chaos * 0.0006);
+            const damping = inExplosionPhase ? 0.992 : Math.max(0.82, 0.96 - particle.chaos * 0.0006);
             particle.vx = particle.vx * damping + ax * stepScale;
             particle.vy = particle.vy * damping + ay * stepScale;
             particle.x += particle.vx * stepScale;
@@ -726,7 +754,7 @@ function App() {
               particle.vy -= 0.4 * stepScale;
             }
 
-            if (Math.random() < 0.02 * stepScale) {
+            if (!inExplosionPhase && Math.random() < 0.02 * stepScale) {
               particle.love = Math.max(0, particle.love - 0.25);
               particle.energy = Math.max(0, particle.energy - 0.1);
             }
@@ -734,6 +762,7 @@ function App() {
             residualAccumulatorRef.current += stepScale;
             if (residualAccumulatorRef.current >= RESIDUAL_EMIT_INTERVAL) {
               residualAccumulatorRef.current = 0;
+              const ttlBase = inExplosionPhase ? 110 : 170;
               residuals.push({
                 x: particle.x,
                 y: particle.y,
@@ -743,26 +772,27 @@ function App() {
                 chaos: particle.chaos,
                 order: particle.order,
                 energy: particle.energy,
-                ttl: 170 + particle.energy,
-                maxTtl: 170 + particle.energy,
+                ttl: ttlBase + particle.energy,
+                maxTtl: ttlBase + particle.energy,
                 color: particle.archetype.color
               });
             }
           }
 
-          for (let i = 0; i < particles.length; i += 1) {
-            const particle = particles[i];
-            const nearby = nearbyTypeCounts[i];
+          if (!inExplosionPhase) {
+            for (let i = 0; i < particles.length; i += 1) {
+              const particle = particles[i];
+              const nearby = nearbyTypeCounts[i];
 
-            if (interactionCounts[i] === 0) {
-              particle.inactiveSteps += stepScale;
-            } else {
-              particle.inactiveSteps = Math.max(0, particle.inactiveSteps - stepScale * 0.6);
-            }
+              if (interactionCounts[i] === 0) {
+                particle.inactiveSteps += stepScale;
+              } else {
+                particle.inactiveSteps = Math.max(0, particle.inactiveSteps - stepScale * 0.6);
+              }
 
-            if (particle.love <= 1 && Math.random() < 0.0018 * stepScale) {
-              particlesToRemove.add(particle.id);
-            }
+              if (particle.love <= 1 && Math.random() < 0.0018 * stepScale) {
+                particlesToRemove.add(particle.id);
+              }
 
             if (particle.type === "PULSE" && particle.inactiveSteps > 80) {
               particlesToRemove.add(particle.id);
@@ -830,10 +860,11 @@ function App() {
               }
             }
 
-            if (particle.bondId !== null) {
-              const bondIndex = idToIndex.get(particle.bondId);
-              if (bondIndex === undefined || particlesToRemove.has(particle.bondId)) {
-                particle.bondId = null;
+              if (particle.bondId !== null) {
+                const bondIndex = idToIndex.get(particle.bondId);
+                if (bondIndex === undefined || particlesToRemove.has(particle.bondId)) {
+                  particle.bondId = null;
+                }
               }
             }
           }
@@ -922,8 +953,12 @@ function App() {
             }
           }
 
-          if (residuals.length > MAX_RESIDUALS) {
-            residuals.splice(0, residuals.length - MAX_RESIDUALS);
+          const residualSoftCap = Math.min(MAX_RESIDUALS_SOFT, Math.max(700, Math.floor(particles.length * 1.6)));
+          if (residuals.length > residualSoftCap) {
+            residuals.splice(0, residuals.length - residualSoftCap);
+          }
+          if (residuals.length > MAX_RESIDUALS_HARD) {
+            residuals.splice(0, residuals.length - MAX_RESIDUALS_HARD);
           }
         }
       }
@@ -1010,6 +1045,8 @@ function App() {
         lastFpsTimeRef.current = time;
         setParticleCount(particles.length);
         setAmorCount(particles.filter((particle) => particle.type === "AMOR").length);
+        setResidualCount(residuals.length);
+        setExplosionPhaseActive(simulationStepsRef.current <= EXPLOSION_PHASE_STEPS);
         setArchetypeCounts(countArchetypes(particles));
       }
 
@@ -1054,10 +1091,11 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.1</strong>
+            <strong>Universe Game v1.3.2</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">State: {paused ? "Paused" : "Running"} | Time: {timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</p>
+          <p className="dim">Phase: {explosionPhaseActive ? "Explosion" : "Rules Active"} | Residuals: {residualCount}</p>
           <p className="dim">Ambient: {isMusicPlaying ? "Playing" : "Off"} (optional)</p>
           <div className="legend dim">
             {archetypeLegend.map((entry) => (
