@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.6` - Durable per-row CSV writes, adaptive performance controls, non-extinguishable Amor semantics, and extinction event restart overlays.
 - `v1.3.5` - Updated English universe rules documentation synced to runtime behavior and experiment workflow.
 - `v1.3.4` - Startup session configurator, decoupled 2-second visual traces vs configurable influence, and incremental CSV session logging with auto-run checkpoints.
 - `v1.3.3` - Simulation timer/extinction analytics, larger wrap-around universe, live workload metrics, and hot-loop allocation optimizations.
@@ -16,6 +17,13 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.6`
+
+- Hardened CSV autosave so session rows are durably appended to disk incrementally during runs.
+- Added configurable adaptive performance mode controls and population/diversity balancing parameters.
+- Updated extinction semantics so Amor persists as a fundamental force while extinction tracks disappearance of non-Amor archetypes.
+- Added extinction event overlays with manual restart for individual mode and timed auto-restart for auto mode.
 
 ### `v1.3.5`
 

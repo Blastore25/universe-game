@@ -87,6 +87,7 @@ const BIG_BANG_COUNTS: Record<ArchetypeKey, number> = {
 const LOVE_BOND_DISTANCE = 34;
 const LOVE_BOND_THRESHOLD = 80;
 const BASE_INTERACTION_DISTANCE = 130;
+const INTERACTION_CELL_SIZE = 140;
 const NO_OVERLAP_DELAY_STEPS = 60;
 const OVERLAP_CELL_SIZE = 24;
 const EXPLOSION_PHASE_STEPS = 60;
@@ -103,6 +104,12 @@ interface SessionConfig {
   amorPairForce: number;
   influenceTtlBase: number;
   influenceTtlExplosionBase: number;
+  lowPopulationThreshold: number;
+  lowPopulationDeathScale: number;
+  rarityBirthBoost: number;
+  diversityFloor: number;
+  loveDeathProtection: number;
+  adaptivePerformanceMode: boolean;
 }
 
 const DEFAULT_SESSION_CONFIG: SessionConfig = {
@@ -112,7 +119,13 @@ const DEFAULT_SESSION_CONFIG: SessionConfig = {
   sameTypeRepulsion: 0.03,
   amorPairForce: 0.22,
   influenceTtlBase: 170,
-  influenceTtlExplosionBase: 110
+  influenceTtlExplosionBase: 110,
+  lowPopulationThreshold: 420,
+  lowPopulationDeathScale: 0.45,
+  rarityBirthBoost: 1.25,
+  diversityFloor: 70,
+  loveDeathProtection: 0.55,
+  adaptivePerformanceMode: false
 };
 
 const ATTRACTION_MATRIX: Record<ArchetypeKey, Partial<Record<ArchetypeKey, number>>> = {
@@ -197,9 +210,13 @@ function createBigBangParticles(counts: Record<ArchetypeKey, number>): Particle[
   const particles: Particle[] = [];
   const centerX = WORLD_SIZE / 2;
   const centerY = WORLD_SIZE / 2;
+  const normalizedCounts: Record<ArchetypeKey, number> = {
+    ...counts,
+    AMOR: Math.max(1, counts.AMOR)
+  };
 
-  for (const type of Object.keys(counts) as ArchetypeKey[]) {
-    const count = counts[type];
+  for (const type of Object.keys(normalizedCounts) as ArchetypeKey[]) {
+    const count = normalizedCounts[type];
     for (let i = 0; i < count; i += 1) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 2.2 + Math.random() * 2.8;
@@ -254,6 +271,8 @@ function App() {
   const [extinctionSeconds, setExtinctionSeconds] = useState<number | null>(null);
   const [extinctionCount, setExtinctionCount] = useState(0);
   const [extinctionAvgSeconds, setExtinctionAvgSeconds] = useState<number | null>(null);
+  const [extinctionNotice, setExtinctionNotice] = useState<string | null>(null);
+  const [autoRestartCountdown, setAutoRestartCountdown] = useState<number | null>(null);
   const [autoRunCompleted, setAutoRunCompleted] = useState(0);
   const [csvStatus, setCsvStatus] = useState("No file selected");
   const [archetypeCounts, setArchetypeCounts] = useState<Record<ArchetypeKey, number>>(createEmptyArchetypeCounts);
@@ -294,9 +313,11 @@ function App() {
   const currentRunIndexRef = useRef(0);
   const sessionIdRef = useRef<string>("");
   const nextCheckpointStepRef = useRef(CHECKPOINT_INTERVAL_STEPS);
-  const csvWriterRef = useRef<WritableStreamDefaultWriter<string> | null>(null);
+  const csvFileHandleRef = useRef<FileSystemFileHandle | null>(null);
+  const csvByteOffsetRef = useRef(0);
   const csvWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const csvFallbackRowsRef = useRef<string[]>([]);
+  const autoRestartTimeoutRef = useRef<number | null>(null);
   const extinctionRecordedRef = useRef(false);
   const extinctionCountRef = useRef(0);
   const extinctionAvgRef = useRef<number | null>(null);
@@ -308,6 +329,7 @@ function App() {
   const particlesToRemoveRef = useRef<Set<number>>(new Set());
   const particlesToSpawnRef = useRef<Particle[]>([]);
   const idToIndexRef = useRef<Map<number, number>>(new Map());
+  const particleGridRef = useRef<Map<string, number[]>>(new Map());
   const residualGridRef = useRef<Map<string, number[]>>(new Map());
   const overlapGridRef = useRef<Map<string, number[]>>(new Map());
   const pausedRef = useRef(paused);
@@ -384,13 +406,19 @@ function App() {
   }, []);
 
   const enqueueCsvLine = useCallback((line: string) => {
-    const writer = csvWriterRef.current;
-    if (!writer) {
+    const handle = csvFileHandleRef.current;
+    if (!handle) {
       csvFallbackRowsRef.current.push(line);
       return;
     }
+    const encoder = new TextEncoder();
+    const payload = `${line}\n`;
+    const bytes = encoder.encode(payload).byteLength;
     csvWriteChainRef.current = csvWriteChainRef.current.then(async () => {
-      await writer.write(`${line}\n`);
+      const writable = await handle.createWritable({ keepExistingData: true });
+      await writable.write({ type: "write", position: csvByteOffsetRef.current, data: payload });
+      await writable.close();
+      csvByteOffsetRef.current += bytes;
     });
   }, []);
 
@@ -415,7 +443,13 @@ function App() {
         cfg.sameTypeRepulsion,
         cfg.amorPairForce,
         cfg.influenceTtlBase,
-        cfg.influenceTtlExplosionBase
+        cfg.influenceTtlExplosionBase,
+        cfg.lowPopulationThreshold,
+        cfg.lowPopulationDeathScale,
+        cfg.rarityBirthBoost,
+        cfg.diversityFloor,
+        cfg.loveDeathProtection,
+        cfg.adaptivePerformanceMode ? 1 : 0
       ]
         .map(toCsvCell)
         .join(",");
@@ -440,7 +474,13 @@ function App() {
       sameTypeRepulsion: randFloat(0.012, 0.07),
       amorPairForce: randFloat(0.14, 0.34),
       influenceTtlBase: randInt(120, 420),
-      influenceTtlExplosionBase: randInt(80, 220)
+      influenceTtlExplosionBase: randInt(80, 220),
+      lowPopulationThreshold: randInt(240, 900),
+      lowPopulationDeathScale: randFloat(0.2, 0.85),
+      rarityBirthBoost: randFloat(0.4, 2.5),
+      diversityFloor: randInt(20, 220),
+      loveDeathProtection: randFloat(0.2, 0.9),
+      adaptivePerformanceMode: true
     };
   }, []);
 
@@ -461,6 +501,8 @@ function App() {
     setExplosionPhaseActive(true);
     setElapsedSimSeconds(0);
     setExtinctionSeconds(null);
+    setExtinctionNotice(null);
+    setAutoRestartCountdown(null);
     setArchetypeCounts(countArchetypes(particles));
     setPaused(false);
   }, []);
@@ -535,6 +577,8 @@ function App() {
   const openSessionCsv = useCallback(async (mode: SessionMode) => {
     sessionIdRef.current = `${mode}-${new Date().toISOString().replace(/:/g, "-")}`;
     csvFallbackRowsRef.current = [];
+    csvFileHandleRef.current = null;
+    csvByteOffsetRef.current = 0;
     const header = [
       "session_id",
       "mode",
@@ -553,7 +597,13 @@ function App() {
       "same_type_repulsion",
       "amor_pair_force",
       "influence_ttl_base",
-      "influence_ttl_explosion_base"
+      "influence_ttl_explosion_base",
+      "low_population_threshold",
+      "low_population_death_scale",
+      "rarity_birth_boost",
+      "diversity_floor",
+      "love_death_protection",
+      "adaptive_performance_mode"
     ].join(",");
 
     try {
@@ -567,9 +617,7 @@ function App() {
         suggestedName: `${sessionIdRef.current}.csv`,
         types: [{ description: "CSV", accept: { "text/csv": [".csv"] } }]
       });
-      const writable: FileSystemWritableFileStream = await handle.createWritable();
-      const writer = writable.getWriter();
-      csvWriterRef.current = writer;
+      csvFileHandleRef.current = handle as FileSystemFileHandle;
       csvWriteChainRef.current = Promise.resolve();
       setCsvStatus(`Saving to ${sessionIdRef.current}.csv`);
       enqueueCsvLine(header);
@@ -613,18 +661,27 @@ function App() {
         void audioContextRef.current.close();
         audioContextRef.current = null;
       }
-      if (csvWriterRef.current) {
-        const writer = csvWriterRef.current;
-        csvWriterRef.current = null;
-        void csvWriteChainRef.current.then(async () => {
-          await writer.close();
-        });
+      csvFileHandleRef.current = null;
+      if (autoRestartTimeoutRef.current !== null) {
+        window.clearTimeout(autoRestartTimeoutRef.current);
+        autoRestartTimeoutRef.current = null;
       }
     };
   }, [stopAmbientMusic]);
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName.toLowerCase();
+        const isTextEditable = tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable;
+        if (isTextEditable) {
+          return;
+        }
+      }
+      if (!hasStartedSession) {
+        return;
+      }
       const key = event.key.toLowerCase();
       if (key === " ") {
         event.preventDefault();
@@ -643,7 +700,7 @@ function App() {
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [logRunEvent, resetUniverse]);
+  }, [hasStartedSession, logRunEvent, resetUniverse]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -807,7 +864,20 @@ function App() {
 
       if (!pausedRef.current) {
         const frameScale = (frameDeltaMs / 16.666) * timeScaleRef.current;
-        const subSteps = Math.max(1, Math.min(10, Math.ceil(frameScale / 1.8)));
+        const rawSubSteps = Math.max(1, Math.min(10, Math.ceil(frameScale / 1.8)));
+        const adaptivePerformance = currentConfigRef.current.adaptivePerformanceMode;
+        const workloadSubstepCap = adaptivePerformance
+          ? particles.length > 2400
+            ? 2
+            : particles.length > 1600
+              ? 3
+              : particles.length > 1000
+                ? 4
+                : particles.length > 650
+                  ? 6
+                  : 10
+          : 10;
+        const subSteps = adaptivePerformance ? Math.min(rawSubSteps, workloadSubstepCap) : rawSubSteps;
         substepsAccumulatorRef.current += subSteps;
         const stepScale = frameScale / subSteps;
 
@@ -852,95 +922,117 @@ function App() {
             idToIndex.set(particles[i].id, i);
           }
 
+          const particleGrid = particleGridRef.current;
+          particleGrid.clear();
+          for (let i = 0; i < particles.length; i += 1) {
+            const p = particles[i];
+            const gx = Math.floor(p.x / INTERACTION_CELL_SIZE);
+            const gy = Math.floor(p.y / INTERACTION_CELL_SIZE);
+            const key = `${gx}|${gy}`;
+            const list = particleGrid.get(key);
+            if (list) {
+              list.push(i);
+            } else {
+              particleGrid.set(key, [i]);
+            }
+          }
+
           for (let i = 0; i < particles.length; i += 1) {
             const particle = particles[i];
             particle.age += stepScale;
             let ax = 0;
             let ay = 0;
-
-            for (let j = 0; j < particles.length; j += 1) {
-              if (i === j) {
-                continue;
-              }
-              interactionChecksAccumulatorRef.current += 1;
-
-              const other = particles[j];
-              const dx = other.x - particle.x;
-              const dy = other.y - particle.y;
-              const distSq = dx * dx + dy * dy;
-
-              if (distSq < 1) {
-                continue;
-              }
-
-              const dist = Math.sqrt(distSq);
-              if (dist >= BASE_INTERACTION_DISTANCE) {
-                continue;
-              }
-
-              nearbyTypeCounts[i * 5 + ARCHETYPE_INDEX[other.type]] += 1;
-              interactionCounts[i] += 1;
-
-              if (!inExplosionPhase && particle.type === "AMOR" && dist < 80) {
-                other.love = clampStat(other.love + 0.18 * stepScale);
-                other.energy = clampStat(other.energy + 0.08 * stepScale);
-              }
-
-              if (
-                !inExplosionPhase &&
-                particle.type === "VOID" &&
-                other.type !== "VOID" &&
-                dist < 18 &&
-                Math.random() < 0.0038 * stepScale
-              ) {
-                particlesToRemove.add(other.id);
-                particle.energy = clampStat(particle.energy + 6);
-                particle.chaos = clampStat(particle.chaos + 2);
-              }
-
-              let force = 0;
-              if (inExplosionPhase) {
-                force = -0.18;
-              } else {
-                force = forceForPair(particle.type, other.type, currentConfigRef.current);
-                if (particle.bondId !== null && particle.bondId === other.id) {
-                  force = currentConfigRef.current.amorPairForce;
+            const particleCellX = Math.floor(particle.x / INTERACTION_CELL_SIZE);
+            const particleCellY = Math.floor(particle.y / INTERACTION_CELL_SIZE);
+            for (let gx = particleCellX - 1; gx <= particleCellX + 1; gx += 1) {
+              for (let gy = particleCellY - 1; gy <= particleCellY + 1; gy += 1) {
+                const nearbyParticles = particleGrid.get(`${gx}|${gy}`);
+                if (!nearbyParticles) {
+                  continue;
                 }
-              }
-              ax += (dx / dist) * force;
-              ay += (dy / dist) * force;
+                for (let n = 0; n < nearbyParticles.length; n += 1) {
+                  const j = nearbyParticles[n];
+                  if (i === j) {
+                    continue;
+                  }
+                  interactionChecksAccumulatorRef.current += 1;
+                  const other = particles[j];
+                  const dx = other.x - particle.x;
+                  const dy = other.y - particle.y;
+                  const distSq = dx * dx + dy * dy;
+                  if (distSq < 1) {
+                    continue;
+                  }
+                  const dist = Math.sqrt(distSq);
+                  if (dist >= BASE_INTERACTION_DISTANCE) {
+                    continue;
+                  }
+                  nearbyTypeCounts[i * 5 + ARCHETYPE_INDEX[other.type]] += 1;
+                  interactionCounts[i] += 1;
 
-              if (
-                !inExplosionPhase &&
-                particle.type === "VOID" &&
-                other.type === "BLOOM" &&
-                particle.love > 74 &&
-                Math.random() < 0.0018 * stepScale
-              ) {
-                particle.type = "BLOOM";
-                particle.archetype = ARCHETYPES.BLOOM;
-                particle.radius = ARCHETYPES.BLOOM.size;
-                particle.chaos = clampStat(particle.chaos - 30);
-                particle.order = clampStat(particle.order + 24);
-              }
+                  if (!inExplosionPhase && particle.type === "AMOR" && dist < 80) {
+                    other.love = clampStat(other.love + 0.18 * stepScale);
+                    other.energy = clampStat(other.energy + 0.08 * stepScale);
+                  }
 
-              if (
-                !inExplosionPhase &&
-                particle.bondId === null &&
-                other.bondId === null &&
-                particle.love >= LOVE_BOND_THRESHOLD &&
-                other.love >= LOVE_BOND_THRESHOLD &&
-                dist <= LOVE_BOND_DISTANCE
-              ) {
-                particle.bondId = other.id;
-                other.bondId = particle.id;
+                  if (
+                    !inExplosionPhase &&
+                    particle.type === "VOID" &&
+                    other.type !== "VOID" &&
+                    other.type !== "AMOR" &&
+                    dist < 18 &&
+                    Math.random() < 0.0038 * stepScale
+                  ) {
+                    particlesToRemove.add(other.id);
+                    particle.energy = clampStat(particle.energy + 6);
+                    particle.chaos = clampStat(particle.chaos + 2);
+                  }
+
+                  let force = 0;
+                  if (inExplosionPhase) {
+                    force = -0.18;
+                  } else {
+                    force = forceForPair(particle.type, other.type, currentConfigRef.current);
+                    if (particle.bondId !== null && particle.bondId === other.id) {
+                      force = currentConfigRef.current.amorPairForce;
+                    }
+                  }
+                  ax += (dx / dist) * force;
+                  ay += (dy / dist) * force;
+
+                  if (
+                    !inExplosionPhase &&
+                    particle.type === "VOID" &&
+                    other.type === "BLOOM" &&
+                    particle.love > 74 &&
+                    Math.random() < 0.0018 * stepScale
+                  ) {
+                    particle.type = "BLOOM";
+                    particle.archetype = ARCHETYPES.BLOOM;
+                    particle.radius = ARCHETYPES.BLOOM.size;
+                    particle.chaos = clampStat(particle.chaos - 30);
+                    particle.order = clampStat(particle.order + 24);
+                  }
+
+                  if (
+                    !inExplosionPhase &&
+                    particle.bondId === null &&
+                    other.bondId === null &&
+                    particle.love >= LOVE_BOND_THRESHOLD &&
+                    other.love >= LOVE_BOND_THRESHOLD &&
+                    dist <= LOVE_BOND_DISTANCE
+                  ) {
+                    particle.bondId = other.id;
+                    other.bondId = particle.id;
+                  }
+                }
               }
             }
 
-            const particleCellX = Math.floor(particle.x / RESIDUAL_CELL_SIZE);
-            const particleCellY = Math.floor(particle.y / RESIDUAL_CELL_SIZE);
-            for (let gx = particleCellX - 1; gx <= particleCellX + 1; gx += 1) {
-              for (let gy = particleCellY - 1; gy <= particleCellY + 1; gy += 1) {
+            const residualCellX = Math.floor(particle.x / RESIDUAL_CELL_SIZE);
+            const residualCellY = Math.floor(particle.y / RESIDUAL_CELL_SIZE);
+            for (let gx = residualCellX - 1; gx <= residualCellX + 1; gx += 1) {
+              for (let gy = residualCellY - 1; gy <= residualCellY + 1; gy += 1) {
                 const nearby = residualGrid.get(`${gx}|${gy}`);
                 if (!nearby) {
                   continue;
@@ -1025,50 +1117,68 @@ function App() {
           }
 
           if (!inExplosionPhase) {
+            const typeCountsNow = createEmptyArchetypeCounts();
+            for (let i = 0; i < particles.length; i += 1) {
+              typeCountsNow[particles[i].type] += 1;
+            }
+            const totalPopulation = particles.length;
+            const popBlend = Math.min(1, totalPopulation / Math.max(1, currentConfigRef.current.lowPopulationThreshold));
+            const deathScale =
+              currentConfigRef.current.lowPopulationDeathScale + (1 - currentConfigRef.current.lowPopulationDeathScale) * popBlend;
+            const birthScale = 1 + (1 - popBlend) * 0.9;
+            const rarityMultiplier = (type: ArchetypeKey) => {
+              const deficit = Math.max(0, currentConfigRef.current.diversityFloor - typeCountsNow[type]);
+              return 1 + (deficit / Math.max(1, currentConfigRef.current.diversityFloor)) * currentConfigRef.current.rarityBirthBoost;
+            };
             for (let i = 0; i < particles.length; i += 1) {
               const particle = particles[i];
+              const loveShield = 1 - (particle.love / 100) * currentConfigRef.current.loveDeathProtection;
+              const deathBias = Math.max(0.1, deathScale * loveShield);
               if (interactionCounts[i] === 0) {
                 particle.inactiveSteps += stepScale;
               } else {
                 particle.inactiveSteps = Math.max(0, particle.inactiveSteps - stepScale * 0.6);
               }
 
-              if (particle.love <= 1 && Math.random() < 0.0018 * stepScale) {
+              if (particle.type !== "AMOR" && particle.love <= 1 && Math.random() < 0.0018 * stepScale * deathBias) {
                 particlesToRemove.add(particle.id);
               }
 
-            if (particle.type === "PULSE" && particle.inactiveSteps > 80) {
+            if (particle.type === "PULSE" && particle.inactiveSteps > 80 && Math.random() < 0.03 * stepScale * deathBias) {
               particlesToRemove.add(particle.id);
             }
             if (particle.type === "BLOOM" && nearbyCount(nearbyTypeCounts, i, "VOID") >= 3) {
-              if (Math.random() < 0.0036 * stepScale) {
+              if (Math.random() < 0.0036 * stepScale * deathBias) {
                 particlesToRemove.add(particle.id);
               }
             }
             if (particle.type === "ECHO" && particle.chaos > 85) {
-              if (Math.random() < 0.0036 * stepScale) {
+              if (Math.random() < 0.0036 * stepScale * deathBias) {
                 particlesToRemove.add(particle.id);
               }
             }
-            if (particle.type === "VOID" && Math.random() < 0.0019 * stepScale) {
+            if (particle.type === "VOID" && Math.random() < 0.0019 * stepScale * deathBias) {
               particlesToRemove.add(particle.id);
             }
-            if (particle.type === "AMOR" && nearbyCount(nearbyTypeCounts, i, "VOID") >= 2 && Math.random() < 0.0017 * stepScale) {
+            if (particle.type === "AMOR" && nearbyCount(nearbyTypeCounts, i, "VOID") >= 2 && Math.random() < 0.0017 * stepScale * deathBias) {
               const saveTarget = particles.find((candidate) => candidate.type !== "AMOR" && !particlesToRemove.has(candidate.id));
               if (saveTarget) {
                 saveTarget.love = clampStat(saveTarget.love + 45);
                 saveTarget.energy = clampStat(saveTarget.energy + 28);
-                particlesToRemove.add(particle.id);
+                // Amor sacrifices strength, not existence.
+                particle.love = clampStat(particle.love - 35);
+                particle.energy = clampStat(particle.energy - 25);
+                particle.order = clampStat(particle.order + 5);
               }
             }
 
             if (particle.type === "PULSE" && nearbyCount(nearbyTypeCounts, i, "BLOOM") >= 1) {
-              if (Math.random() < 0.0015 * stepScale) {
+              if (Math.random() < 0.0015 * stepScale * birthScale * rarityMultiplier("PULSE")) {
                 particlesToSpawn.push(spawnParticle(particle.x + (Math.random() - 0.5) * 30, particle.y + (Math.random() - 0.5) * 30, "PULSE"));
               }
             }
             if (particle.type === "BLOOM" && nearbyCount(nearbyTypeCounts, i, "ECHO") >= 1) {
-              if (Math.random() < 0.0017 * stepScale) {
+              if (Math.random() < 0.0017 * stepScale * birthScale * rarityMultiplier("BLOOM")) {
                 particlesToSpawn.push(spawnParticle(particle.x + (Math.random() - 0.5) * 24, particle.y + (Math.random() - 0.5) * 24, "BLOOM"));
                 if (Math.random() < 0.45) {
                   particlesToSpawn.push(spawnParticle(particle.x + (Math.random() - 0.5) * 24, particle.y + (Math.random() - 0.5) * 24, "BLOOM"));
@@ -1076,7 +1186,7 @@ function App() {
               }
             }
             if (particle.type === "ECHO" && nearbyCount(nearbyTypeCounts, i, "ECHO") >= 2) {
-              if (Math.random() < 0.0015 * stepScale) {
+              if (Math.random() < 0.0015 * stepScale * birthScale * rarityMultiplier("ECHO")) {
                 const echo = spawnParticle(particle.x + (Math.random() - 0.5) * 20, particle.y + (Math.random() - 0.5) * 20, "ECHO");
                 echo.order = clampStat(echo.order + 18);
                 echo.chaos = clampStat(echo.chaos - 14);
@@ -1084,7 +1194,7 @@ function App() {
               }
             }
             if (particle.type === "VOID" && nearbyCount(nearbyTypeCounts, i, "PULSE") >= 2) {
-              if (Math.random() < 0.0015 * stepScale) {
+              if (Math.random() < 0.0015 * stepScale * birthScale * rarityMultiplier("VOID")) {
                 const v = spawnParticle(particle.x + (Math.random() - 0.5) * 24, particle.y + (Math.random() - 0.5) * 24, "VOID");
                 v.chaos = clampStat(v.chaos + 14);
                 particlesToSpawn.push(v);
@@ -1095,7 +1205,7 @@ function App() {
                 nearbyCount(nearbyTypeCounts, i, "BLOOM") +
                 nearbyCount(nearbyTypeCounts, i, "ECHO") +
                 nearbyCount(nearbyTypeCounts, i, "PULSE");
-              if (compatible >= 1 && Math.random() < 0.0014 * stepScale) {
+              if (compatible >= 1 && Math.random() < 0.0014 * stepScale * birthScale * rarityMultiplier("AMOR")) {
                 const typeRoll = Math.random();
                 const newType: ArchetypeKey = typeRoll < 0.34 ? "BLOOM" : typeRoll < 0.68 ? "ECHO" : "PULSE";
                 const born = spawnParticle(particle.x + (Math.random() - 0.5) * 18, particle.y + (Math.random() - 0.5) * 18, newType);
@@ -1116,6 +1226,14 @@ function App() {
           }
 
           if (particlesToRemove.size > 0) {
+            const amorCandidates = particles.filter((particle) => particle.type === "AMOR");
+            if (amorCandidates.length > 0) {
+              const amorRemoved = amorCandidates.filter((particle) => particlesToRemove.has(particle.id)).length;
+              if (amorRemoved >= amorCandidates.length) {
+                // Preserve at least one Amor particle as the fundamental connective force.
+                particlesToRemove.delete(amorCandidates[0].id);
+              }
+            }
             for (let i = particles.length - 1; i >= 0; i -= 1) {
               if (particlesToRemove.has(particles[i].id)) {
                 particles.splice(i, 1);
@@ -1131,7 +1249,16 @@ function App() {
           }
 
           simulationStepsRef.current += stepScale;
-          if (simulationStepsRef.current > NO_OVERLAP_DELAY_STEPS) {
+          const overlapInterval = adaptivePerformance
+            ? particles.length > 2400
+              ? 4
+              : particles.length > 1500
+                ? 3
+                : particles.length > 800
+                  ? 2
+                  : 1
+            : 1;
+          if (simulationStepsRef.current > NO_OVERLAP_DELAY_STEPS && step % overlapInterval === 0) {
             const overlapGrid = overlapGridRef.current;
             overlapGrid.clear();
             for (let i = 0; i < particles.length; i += 1) {
@@ -1213,7 +1340,8 @@ function App() {
 
       ctx.save();
       ctx.lineCap = "round";
-      for (let i = 0; i < residuals.length; i += 1) {
+      const residualRenderStride = residuals.length > 2500 ? 4 : residuals.length > 1800 ? 3 : residuals.length > 1100 ? 2 : 1;
+      for (let i = 0; i < residuals.length; i += residualRenderStride) {
         const residual = residuals[i];
         if (residual.visualTtl <= 0) {
           continue;
@@ -1292,11 +1420,12 @@ function App() {
       frameCounterRef.current += 1;
       if (time - lastFpsTimeRef.current >= 1000) {
         const runSeconds = simulationStepsRef.current / 60;
-        while (simulationStepsRef.current >= nextCheckpointStepRef.current && particles.length > 0) {
+        const nonAmorCount = particles.reduce((total, particle) => total + (particle.type === "AMOR" ? 0 : 1), 0);
+        while (simulationStepsRef.current >= nextCheckpointStepRef.current && nonAmorCount > 0) {
           logRunEvent("checkpoint", runSeconds, particles.length, residuals.length);
           nextCheckpointStepRef.current += CHECKPOINT_INTERVAL_STEPS;
         }
-        if (particles.length === 0 && !extinctionRecordedRef.current) {
+        if (nonAmorCount === 0 && !extinctionRecordedRef.current) {
           extinctionRecordedRef.current = true;
           setExtinctionSeconds(runSeconds);
           const nextCount = extinctionCountRef.current + 1;
@@ -1306,16 +1435,33 @@ function App() {
           extinctionAvgRef.current = nextAvg;
           setExtinctionCount(nextCount);
           setExtinctionAvgSeconds(nextAvg);
-          logRunEvent("extinction", runSeconds, 0, residuals.length);
+          logRunEvent("extinction", runSeconds, nonAmorCount, residuals.length);
           if (sessionMode === "auto" && currentRunIndexRef.current < autoRunTargetRef.current) {
-            currentRunIndexRef.current += 1;
-            setAutoRunCompleted(currentRunIndexRef.current - 1);
-            const nextConfig = randomConfig();
-            resetUniverse(nextConfig);
-            nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-            logRunEvent("run_start", 0, 0, 0);
+            setAutoRunCompleted(currentRunIndexRef.current);
+            setExtinctionNotice(`Extinction Event! All non-Amor particles vanished in run ${currentRunIndexRef.current}. Saved and restarting in 1 second...`);
+            setAutoRestartCountdown(1);
+            setPaused(true);
+            if (autoRestartTimeoutRef.current !== null) {
+              window.clearTimeout(autoRestartTimeoutRef.current);
+            }
+            autoRestartTimeoutRef.current = window.setTimeout(() => {
+              currentRunIndexRef.current += 1;
+              const nextConfig = randomConfig();
+              resetUniverse(nextConfig);
+              nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+              logRunEvent("run_start", 0, 0, 0);
+              setExtinctionNotice(null);
+              setAutoRestartCountdown(null);
+              autoRestartTimeoutRef.current = null;
+            }, 1000);
           } else if (sessionMode === "auto") {
             setAutoRunCompleted(currentRunIndexRef.current);
+            setExtinctionNotice(`Extinction Event! All non-Amor particles vanished. Final auto run (${currentRunIndexRef.current}) saved.`);
+            setAutoRestartCountdown(null);
+            setPaused(true);
+          } else {
+            setExtinctionNotice("Extinction Event! All non-Amor particles vanished. Details saved, do you want to restart?");
+            setAutoRestartCountdown(null);
             setPaused(true);
           }
         }
@@ -1363,6 +1509,15 @@ function App() {
     [archetypeCounts]
   );
 
+  const restartAfterExtinction = useCallback(() => {
+    currentRunIndexRef.current += 1;
+    resetUniverse(currentConfigRef.current);
+    nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+    logRunEvent("run_start", 0, 0, 0);
+    setExtinctionNotice(null);
+    setAutoRestartCountdown(null);
+  }, [logRunEvent, resetUniverse]);
+
   return (
     <main className="app">
       <canvas ref={canvasRef} className="simulation-canvas" />
@@ -1375,10 +1530,11 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.5</strong>
+            <strong>Universe Game v1.3.6</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
+          <p className="dim">Adaptive Performance: {currentConfigRef.current.adaptivePerformanceMode ? "On" : "Off"}</p>
           <p className="dim">CSV: {csvStatus}</p>
           {sessionMode === "auto" ? <p className="dim">Auto progress: {autoRunCompleted}/{autoRunTargetRef.current}</p> : null}
           <p className="dim">State: {paused ? "Paused" : "Running"} | Time: {timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</p>
@@ -1479,9 +1635,38 @@ function App() {
         </div>
       </div>
 
+      {extinctionNotice ? (
+        <div className="event-overlay">
+          <section className="event-card">
+            <h3>Extinction Event!</h3>
+            <p>{extinctionNotice}</p>
+            {sessionMode === "individual" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  wakeHud();
+                  restartAfterExtinction();
+                }}
+              >
+                Restart Universe
+              </button>
+            ) : autoRestartCountdown !== null ? (
+              <p className="dim">Auto restart in {autoRestartCountdown}s...</p>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
+
       {!hasStartedSession ? (
         <div className="startup-overlay">
-          <section className="startup-card">
+          <section
+            className="startup-card"
+            onKeyDownCapture={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+              }
+            }}
+          >
             <h2>Choose Session Mode</h2>
             <p>Configure parameters before the first Big Bang. CSV save prompt appears at start.</p>
             <div className="startup-mode-toggle">
@@ -1568,11 +1753,12 @@ function App() {
                 <input
                   type="number"
                   min={100}
+                  max={10000}
                   value={pendingConfig.maxParticles}
                   onChange={(event) =>
                     setPendingConfig((prev) => ({
                       ...prev,
-                      maxParticles: Math.max(100, Math.floor(Number(event.currentTarget.value) || 100))
+                      maxParticles: Math.min(10000, Math.max(100, Math.floor(Number(event.currentTarget.value) || 100)))
                     }))
                   }
                 />
@@ -1627,6 +1813,94 @@ function App() {
                     setPendingConfig((prev) => ({
                       ...prev,
                       influenceTtlExplosionBase: Math.max(1, Math.floor(Number(event.currentTarget.value) || 1))
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Low-pop threshold
+                <input
+                  type="number"
+                  min={1}
+                  value={pendingConfig.lowPopulationThreshold}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      lowPopulationThreshold: Math.max(1, Math.floor(Number(event.currentTarget.value) || 1))
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Low-pop death scale
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0.05}
+                  max={1}
+                  value={pendingConfig.lowPopulationDeathScale}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      lowPopulationDeathScale: Math.max(0.05, Math.min(1, Number(event.currentTarget.value) || 0.05))
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Rarity birth boost
+                <input
+                  type="number"
+                  step="0.05"
+                  min={0}
+                  value={pendingConfig.rarityBirthBoost}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      rarityBirthBoost: Math.max(0, Number(event.currentTarget.value) || 0)
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Diversity floor
+                <input
+                  type="number"
+                  min={1}
+                  value={pendingConfig.diversityFloor}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      diversityFloor: Math.max(1, Math.floor(Number(event.currentTarget.value) || 1))
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Love death protection
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  max={0.95}
+                  value={pendingConfig.loveDeathProtection}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      loveDeathProtection: Math.max(0, Math.min(0.95, Number(event.currentTarget.value) || 0))
+                    }))
+                  }
+                />
+              </label>
+              <label className="startup-toggle">
+                <span>Adaptive performance mode</span>
+                <input
+                  type="checkbox"
+                  checked={pendingConfig.adaptivePerformanceMode}
+                  onChange={(event) =>
+                    setPendingConfig((prev) => ({
+                      ...prev,
+                      adaptivePerformanceMode: event.currentTarget.checked
                     }))
                   }
                 />

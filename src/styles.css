@@ -113,6 +113,51 @@ body {
   font-size: 12px;
 }
 
+.startup-toggle {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(183, 175, 255, 0.2);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.startup-toggle input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+.event-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 13;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.event-card {
+  width: min(460px, calc(100vw - 24px));
+  border: 1px solid rgba(246, 144, 179, 0.48);
+  background: rgba(18, 10, 24, 0.9);
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+
+.event-card h3 {
+  margin: 0 0 6px;
+}
+
+.event-card p {
+  margin: 0 0 10px;
+  color: #e3ddff;
+  font-size: 13px;
+}
+
 .panel {
   position: absolute;
   top: 16px;
