@@ -1,6 +1,6 @@
 # Universe Game - Fundamental Rules (Current Implementation)
 
-**Version:** `v1.3.12`
+**Version:** `v1.3.13`
 
 This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 
@@ -27,7 +27,7 @@ Default starting counts (editable at session start):
 ## Session Modes
 
 - **Individual session:** one configured universe at a time (manual reset available).
-- **Auto mode:** randomized parameter set per run; each run advances automatically after extinction until target run count is reached.
+- **Auto mode:** randomized parameter set per run; each run advances automatically after **extinction** or a recognized **stable universe** (flat population), until the target run count is reached.
 - **Strict setup-first flow:** while setup is open, simulation canvas/loop/input listeners are not mounted; the universe starts only after explicit `Start`.
 
 ## Big Bang and Phase Timing
@@ -37,6 +37,11 @@ Default starting counts (editable at session start):
 - Parameter edits on setup do not affect any running world in the background because no run exists yet.
 - Run starts with a **Big Bang explosion phase** (~1 sim second) where pairwise rule behavior is temporarily simplified to outward expansion.
 - After explosion phase, full interaction rules apply.
+
+## Run outcomes: extinction vs stable universe
+
+- **Extinction:** all non-Amor particles are gone. The run is marked `extinct` in CSV; the sim pauses with an overlay (individual: restart button; auto: timed advance to the next run when applicable).
+- **Stable universe (equilibrium):** after the explosion phase, the engine samples total and non-Amor population about once per sim second. If, for roughly ten consecutive sim seconds, both totals stay within a tight band (low min/max swing) while a minimum number of non-Amor particles remain, the run is treated as dynamically **static**: sim pauses, CSV row gets `status=stable` and a `stable_seconds` timestamp, and the same overlay / auto-advance behavior as extinction applies.
 
 ## Force and Interaction Model
 
@@ -106,7 +111,8 @@ Logging model:
 
 - **Run-summary rows (not event rows):** one evolving row per run.
 - **Individual mode:** one row for the current universe run, updated at checkpoints/extinction.
-- **Auto mode:** one row per tested universe run, each updated through that run lifecycle.
+- **Auto mode:** one row per tested universe run, each updated through that run lifecycle (including stable-universe completion).
+- CSV columns include `status` (`ongoing` / `extinct` / `stable`), `extinction_seconds`, and `stable_seconds` (whichever applies).
 
 Each row stores run metadata, tunable parameters, and key runtime metrics for later analysis without unbounded event-row growth.
 

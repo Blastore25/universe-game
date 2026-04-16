@@ -95,6 +95,15 @@ const MAX_RESIDUALS_SOFT = 1800;
 const MAX_RESIDUALS_HARD = 2400;
 const VISUAL_TRACE_TTL_STEPS = 120;
 const CHECKPOINT_INTERVAL_STEPS = 300;
+/** Sample population every N sim steps (~1 sim sec at 60 steps/unit) for equilibrium detection. */
+const STATIC_SAMPLE_INTERVAL_STEPS = 60;
+/** Require this many consecutive samples with low variance to declare a stable universe. */
+const STATIC_MIN_SAMPLES = 10;
+const STATIC_MAX_TOTAL_SWING = 3;
+const STATIC_MAX_NONAMOR_SWING = 2;
+const STATIC_MIN_NONAMOR = 5;
+const STATIC_SAMPLE_BUFFER_CAP = 28;
+const STATIC_MAX_PUSHES_PER_FRAME = 8;
 
 interface SessionConfig {
   counts: Record<ArchetypeKey, number>;
@@ -116,9 +125,10 @@ interface RunSummary {
   sessionId: string;
   mode: SessionMode;
   runIndex: number;
-  status: "ongoing" | "extinct";
+  status: "ongoing" | "extinct" | "stable";
   simSeconds: number;
   extinctionSeconds: number | null;
+  stableSimSeconds: number | null;
   particlesInitial: number;
   particlesPeak: number;
   nonAmorMin: number;
@@ -348,6 +358,8 @@ function App() {
   const [extinctionCount, setExtinctionCount] = useState(0);
   const [extinctionAvgSeconds, setExtinctionAvgSeconds] = useState<number | null>(null);
   const [extinctionNotice, setExtinctionNotice] = useState<string | null>(null);
+  const [stableNotice, setStableNotice] = useState<string | null>(null);
+  const [stableEquilibriumSeconds, setStableEquilibriumSeconds] = useState<number | null>(null);
   const [autoRestartCountdown, setAutoRestartCountdown] = useState<number | null>(null);
   const [autoRunCompleted, setAutoRunCompleted] = useState(0);
   const [csvStatus, setCsvStatus] = useState("No file selected");
@@ -398,6 +410,9 @@ function App() {
   const runSummariesRef = useRef<Map<number, RunSummary>>(new Map());
   const autoRestartTimeoutRef = useRef<number | null>(null);
   const extinctionRecordedRef = useRef(false);
+  const staticRecordedRef = useRef(false);
+  const staticSamplesRef = useRef<{ total: number; nonAmor: number }[]>([]);
+  const staticNextSampleAtRef = useRef(EXPLOSION_PHASE_STEPS + STATIC_SAMPLE_INTERVAL_STEPS);
   const extinctionCountRef = useRef(0);
   const extinctionAvgRef = useRef<number | null>(null);
   const lastFpsTimeRef = useRef(performance.now());
@@ -520,6 +535,7 @@ function App() {
         summary.status,
         summary.simSeconds.toFixed(3),
         summary.extinctionSeconds === null ? "" : summary.extinctionSeconds.toFixed(3),
+        summary.stableSimSeconds === null ? "" : summary.stableSimSeconds.toFixed(3),
         summary.particlesInitial,
         summary.particlesPeak,
         summary.nonAmorMin,
@@ -559,6 +575,7 @@ function App() {
       "status",
       "sim_seconds",
       "extinction_seconds",
+      "stable_seconds",
       "particles_initial",
       "particles_peak",
       "non_amor_min",
@@ -625,6 +642,7 @@ function App() {
       status: "ongoing",
       simSeconds: 0,
       extinctionSeconds: null,
+      stableSimSeconds: null,
       particlesInitial: initial,
       particlesPeak: initial,
       nonAmorMin: nonAmorInitial,
@@ -639,17 +657,30 @@ function App() {
   }, [flushCsvSummaries]);
 
   const updateCurrentRunSummary = useCallback(
-    (simSeconds: number, particlesNow: number, nonAmorNow: number, residualsNow: number, extinct: boolean) => {
+    (
+      simSeconds: number,
+      particlesNow: number,
+      nonAmorNow: number,
+      residualsNow: number,
+      endKind: "none" | "extinct" | "stable"
+    ) => {
       const run = runSummariesRef.current.get(currentRunIndexRef.current);
       if (!run) {
         return;
       }
       const nextCheckpointCount = run.checkpointCount + (simSeconds >= nextCheckpointStepRef.current / 60 ? 1 : 0);
+      let nextStatus: RunSummary["status"] = run.status;
+      if (endKind === "extinct") {
+        nextStatus = "extinct";
+      } else if (endKind === "stable") {
+        nextStatus = "stable";
+      }
       const next: RunSummary = {
         ...run,
-        status: extinct ? "extinct" : "ongoing",
+        status: nextStatus,
         simSeconds,
-        extinctionSeconds: extinct ? simSeconds : run.extinctionSeconds,
+        extinctionSeconds: endKind === "extinct" ? simSeconds : run.extinctionSeconds,
+        stableSimSeconds: endKind === "stable" ? simSeconds : run.stableSimSeconds,
         particlesPeak: Math.max(run.particlesPeak, particlesNow),
         nonAmorMin: Math.min(run.nonAmorMin, nonAmorNow),
         nonAmorMax: Math.max(run.nonAmorMax, nonAmorNow),
@@ -657,7 +688,11 @@ function App() {
         residualPeak: Math.max(run.residualPeak, residualsNow),
         checkpointCount: nextCheckpointCount
       };
-      next.historyBrief = `nonAmor[min:${next.nonAmorMin},max:${next.nonAmorMax},last:${next.nonAmorCurrent}] peakParticles:${next.particlesPeak} peakResiduals:${next.residualPeak}`;
+      if (endKind === "none") {
+        next.historyBrief = `nonAmor[min:${next.nonAmorMin},max:${next.nonAmorMax},last:${next.nonAmorCurrent}] peakParticles:${next.particlesPeak} peakResiduals:${next.residualPeak}`;
+      } else {
+        next.historyBrief = `[${endKind}] nonAmor[min:${next.nonAmorMin},max:${next.nonAmorMax},last:${next.nonAmorCurrent}] peakParticles:${next.particlesPeak} peakResiduals:${next.residualPeak}`;
+      }
       runSummariesRef.current.set(currentRunIndexRef.current, next);
       flushCsvSummaries();
     },
@@ -699,6 +734,9 @@ function App() {
     residualAccumulatorRef.current = 0;
     simulationStepsRef.current = 0;
     extinctionRecordedRef.current = false;
+    staticRecordedRef.current = false;
+    staticSamplesRef.current = [];
+    staticNextSampleAtRef.current = EXPLOSION_PHASE_STEPS + STATIC_SAMPLE_INTERVAL_STEPS;
     lastFrameTimeRef.current = performance.now();
     setSelectedParticleId(null);
     setParticleCount(particles.length);
@@ -708,6 +746,8 @@ function App() {
     setElapsedSimSeconds(0);
     setExtinctionSeconds(null);
     setExtinctionNotice(null);
+    setStableNotice(null);
+    setStableEquilibriumSeconds(null);
     setAutoRestartCountdown(null);
     setArchetypeCounts(countArchetypes(particles));
     setPaused(false);
@@ -1612,6 +1652,86 @@ function App() {
             residuals.splice(0, residuals.length - MAX_RESIDUALS_HARD);
           }
         }
+
+        // Stable universe: total and non-Amor counts stay within a tight band for several sim seconds.
+        let staticPushGuard = 0;
+        while (
+          staticPushGuard < STATIC_MAX_PUSHES_PER_FRAME &&
+          !extinctionRecordedRef.current &&
+          !staticRecordedRef.current &&
+          simulationStepsRef.current > EXPLOSION_PHASE_STEPS &&
+          staticNextSampleAtRef.current <= simulationStepsRef.current
+        ) {
+          staticPushGuard += 1;
+          const plist = particlesRef.current;
+          const resids = residualsRef.current;
+          let na = 0;
+          for (let si = 0; si < plist.length; si += 1) {
+            if (plist[si].type !== "AMOR") {
+              na += 1;
+            }
+          }
+          const buf = staticSamplesRef.current;
+          buf.push({ total: plist.length, nonAmor: na });
+          if (buf.length > STATIC_SAMPLE_BUFFER_CAP) {
+            buf.shift();
+          }
+          staticNextSampleAtRef.current += STATIC_SAMPLE_INTERVAL_STEPS;
+
+          if (buf.length >= STATIC_MIN_SAMPLES) {
+            const recent = buf.slice(-STATIC_MIN_SAMPLES);
+            const totals = recent.map((s) => s.total);
+            const nonAmors = recent.map((s) => s.nonAmor);
+            const totalSwing = Math.max(...totals) - Math.min(...totals);
+            const nonAmorSwing = Math.max(...nonAmors) - Math.min(...nonAmors);
+            const lastNonAmor = nonAmors[nonAmors.length - 1];
+            if (
+              lastNonAmor >= STATIC_MIN_NONAMOR &&
+              totalSwing <= STATIC_MAX_TOTAL_SWING &&
+              nonAmorSwing <= STATIC_MAX_NONAMOR_SWING
+            ) {
+              staticRecordedRef.current = true;
+              const runSecondsEq = simulationStepsRef.current / 60;
+              setStableEquilibriumSeconds(runSecondsEq);
+              updateCurrentRunSummary(runSecondsEq, plist.length, na, resids.length, "stable");
+              setExtinctionNotice(null);
+              setPaused(true);
+              const sm = sessionModeRef.current;
+              if (sm === "auto" && currentRunIndexRef.current < autoRunTargetRef.current) {
+                setAutoRunCompleted(currentRunIndexRef.current);
+                setStableNotice(
+                  `Stable universe: population held steady for ~${STATIC_MIN_SAMPLES} sim seconds (total swing ≤${STATIC_MAX_TOTAL_SWING}, non-Amor swing ≤${STATIC_MAX_NONAMOR_SWING}). Run ${currentRunIndexRef.current} saved. Next run in 1 second...`
+                );
+                setAutoRestartCountdown(1);
+                if (autoRestartTimeoutRef.current !== null) {
+                  window.clearTimeout(autoRestartTimeoutRef.current);
+                }
+                autoRestartTimeoutRef.current = window.setTimeout(() => {
+                  currentRunIndexRef.current += 1;
+                  const nextConfig = randomConfig();
+                  resetUniverse(nextConfig);
+                  nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+                  initRunSummary("auto", currentRunIndexRef.current, nextConfig);
+                  setExtinctionNotice(null);
+                  setStableNotice(null);
+                  setAutoRestartCountdown(null);
+                  autoRestartTimeoutRef.current = null;
+                }, 1000);
+              } else if (sm === "auto") {
+                setAutoRunCompleted(currentRunIndexRef.current);
+                setStableNotice(
+                  `Stable universe on final auto run (${currentRunIndexRef.current}). Population held steady; details saved.`
+                );
+                setAutoRestartCountdown(null);
+              } else {
+                setStableNotice(
+                  "Stable universe: particle totals have stayed nearly flat for several sim seconds while non-Amor life remains. Details saved — restart to run another universe?"
+                );
+                setAutoRestartCountdown(null);
+              }
+            }
+          }
+        }
       }
 
       ctx.save();
@@ -1706,11 +1826,13 @@ function App() {
         const runSeconds = simulationStepsRef.current / 60;
         const nonAmorCount = particles.reduce((total, particle) => total + (particle.type === "AMOR" ? 0 : 1), 0);
         while (simulationStepsRef.current >= nextCheckpointStepRef.current && nonAmorCount > 0) {
-          updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, false);
+          updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, "none");
           nextCheckpointStepRef.current += CHECKPOINT_INTERVAL_STEPS;
         }
         if (nonAmorCount === 0 && !extinctionRecordedRef.current) {
           extinctionRecordedRef.current = true;
+          setStableNotice(null);
+          setStableEquilibriumSeconds(null);
           setExtinctionSeconds(runSeconds);
           const nextCount = extinctionCountRef.current + 1;
           const previousAvg = extinctionAvgRef.current;
@@ -1719,7 +1841,7 @@ function App() {
           extinctionAvgRef.current = nextAvg;
           setExtinctionCount(nextCount);
           setExtinctionAvgSeconds(nextAvg);
-          updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, true);
+          updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, "extinct");
           if (sessionMode === "auto" && currentRunIndexRef.current < autoRunTargetRef.current) {
             setAutoRunCompleted(currentRunIndexRef.current);
             setExtinctionNotice(`Extinction Event! All non-Amor particles vanished in run ${currentRunIndexRef.current}. Saved and restarting in 1 second...`);
@@ -1735,6 +1857,7 @@ function App() {
               nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
               initRunSummary("auto", currentRunIndexRef.current, nextConfig);
               setExtinctionNotice(null);
+              setStableNotice(null);
               setAutoRestartCountdown(null);
               autoRestartTimeoutRef.current = null;
             }, 1000);
@@ -1750,7 +1873,7 @@ function App() {
           }
         }
         if (nonAmorCount > 0) {
-          updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, false);
+          updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, "none");
         }
         setFps(frameCounterRef.current);
         frameCounterRef.current = 0;
@@ -1796,12 +1919,13 @@ function App() {
     [archetypeCounts]
   );
 
-  const restartAfterExtinction = useCallback(() => {
+  const restartAfterRunEnd = useCallback(() => {
     currentRunIndexRef.current += 1;
     resetUniverse(currentConfigRef.current);
     nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
     initRunSummary(sessionModeRef.current ?? "individual", currentRunIndexRef.current, currentConfigRef.current);
     setExtinctionNotice(null);
+    setStableNotice(null);
     setAutoRestartCountdown(null);
   }, [initRunSummary, resetUniverse]);
 
@@ -2191,7 +2315,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.12</strong>
+            <strong>Universe Game v1.3.13</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
@@ -2203,6 +2327,7 @@ function App() {
           <p className="dim">
             Sim Timer: {elapsedSimSeconds.toFixed(1)}s
             {extinctionSeconds !== null ? ` | Extinction: ${extinctionSeconds.toFixed(1)}s` : ""}
+            {stableEquilibriumSeconds !== null ? ` | Stable: ${stableEquilibriumSeconds.toFixed(1)}s` : ""}
           </p>
           <p className="dim">
             Extinction Avg ({extinctionCount} run{extinctionCount === 1 ? "" : "s"}):{" "}
@@ -2222,7 +2347,10 @@ function App() {
             ))}
           </div>
           {showHelp ? (
-            <p className="dim">Drag: pan • Pinch/Scroll: zoom • Space: pause • R: reset • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance</p>
+            <p className="dim">
+              Drag: pan • Pinch/Scroll: zoom • Space: pause • R: reset • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance • Flat population
+              for several sim seconds can trigger a stable-universe pause (like extinction).
+            </p>
           ) : null}
         </section>
 
@@ -2296,17 +2424,17 @@ function App() {
         </div>
       </div>
 
-      {extinctionNotice ? (
+      {extinctionNotice || stableNotice ? (
         <div className="event-overlay">
           <section className="event-card">
-            <h3>Extinction Event!</h3>
-            <p>{extinctionNotice}</p>
+            <h3>{extinctionNotice ? "Extinction Event!" : "Stable universe"}</h3>
+            <p>{extinctionNotice ?? stableNotice}</p>
             {sessionMode === "individual" ? (
               <button
                 type="button"
                 onClick={() => {
                   wakeHud();
-                  restartAfterExtinction();
+                  restartAfterRunEnd();
                 }}
               >
                 Restart Universe

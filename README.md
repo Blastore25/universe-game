@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.13` - Stable-universe detection: population equilibrium pauses the sim with restart (individual) or auto-advance (auto), CSV `stable` status and `stable_seconds` column.
 - `v1.3.12` - Fix setup crash from stale `event.currentTarget` in state updaters; debug log off by default and rAF-batched for smooth typing.
 - `v1.3.11` - Setup debug console (in-app + console), global error/rejection capture, and setup input tracing to diagnose startup issues.
 - `v1.3.10` - Setup and simulation are now fully separated; `Universe_Rules.md` synced to strict setup-first start and run-summary CSV behavior.
@@ -23,6 +24,12 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.13`
+
+- Detect **stable universe** when total and non-Amor counts stay within a tight band for several sim seconds after the explosion phase (with a floor on remaining non-Amor life).
+- Pause simulation and show an overlay parallel to extinction: individual mode offers **Restart Universe**; auto mode counts down and starts the next randomized run (or ends on the final run).
+- Run summaries and CSV gain `stable_seconds` and `status=stable`; `Universe_Rules.md` updated.
 
 ### `v1.3.12`
 
