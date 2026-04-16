@@ -1,75 +1,103 @@
 # Universe Game
 
-Universe Game is a contemplative browser-based particle life simulation inspired by a symbolic Big Bang.  
-Five archetypal particle forces interact in a large 2D space: `Pulse`, `Bloom`, `Echo`, `Void`, and `Amor` (Love).
-
-This project explores emergence, tension, balance, and connection through motion and interaction rather than traditional win/lose gameplay.
+Universe Game is a contemplative particle simulation inspired by a symbolic Big Bang.  
+The simulation runs in a React + TypeScript app powered by Vite and is ready for Vercel deployment.
 
 ## Version
 
-- `v1.0.0` - Initial public release: Big Bang particle simulation with 5 fundamental forces, including Love.
+- `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Features
 
-- Real-time particle simulation in an expansive world
-- Five archetypes with distinct tendencies and reactions
-- Love (`Amor`) as a rare unifying force with strong attraction behavior
-- Smooth camera pan and zoom for contemplative exploration
-- Lightweight single-file web app (no build step required)
+- Real-time 2D particle simulation with Big Bang reset
+- Five archetypes: `Pulse`, `Bloom`, `Echo`, `Void`, `Amor`
+- `Amor` behavior preserved as a unifying force with attraction-driven interactions
+- Mouse camera controls: drag to pan, wheel to zoom
+- Keyboard controls: `Space` (pause), `R` (reset), `H` (toggle help)
+- Live stats panel (total particles, Amor count, FPS)
+
+## Tech Stack
+
+- `React 18`
+- `TypeScript`
+- `Vite 5`
 
 ## Project Structure
 
-- `index.html` - Main simulation app (UI + rendering + simulation logic)
-- `Universe_Rules.md` - Narrative/spec rules for archetypes
-- `Universe_Rules.csv` - Spreadsheet-friendly rules table
-- `LICENSE` - MIT license
+- `src/App.tsx` - Simulation logic, render loop, UI panel, controls
+- `src/main.tsx` - React application entrypoint
+- `src/styles.css` - App styling
+- `index.html` - Vite HTML entry
+- `vite.config.ts` - Vite config with React plugin
+- `tsconfig*.json` - TypeScript project configuration
+- `Universe_Rules.md` / `Universe_Rules.csv` - Archetype design reference
 
-## How To Run
+## Local Development
 
-No installation required.
-
-1. Open `index.html` directly in your browser  
-   **or**
-2. Serve the folder with a local static server and open it:
+1. Install dependencies:
 
 ```bash
-python3 -m http.server 8080
+npm install
 ```
 
-Then visit: [http://localhost:8080](http://localhost:8080)
+2. Start development server:
+
+```bash
+npm run dev
+```
+
+3. Open the local URL shown by Vite (usually `http://localhost:5173`).
+
+## Production Build
+
+```bash
+npm run build
+```
+
+Preview the production build locally:
+
+```bash
+npm run preview
+```
+
+## Deploy To Vercel
+
+### Option A: Vercel Dashboard
+
+1. Push this repository to GitHub.
+2. In Vercel, choose **Add New Project** and import the repo.
+3. Vercel auto-detects Vite defaults:
+   - Build command: `npm run build`
+   - Output directory: `dist`
+4. Deploy.
+
+### Option B: Vercel CLI
+
+1. Install CLI once:
+
+```bash
+npm install -g vercel
+```
+
+2. From the project root, deploy:
+
+```bash
+vercel
+```
+
+3. For production promotion:
+
+```bash
+vercel --prod
+```
 
 ## Controls
 
-- `Drag` (mouse or one-finger touch): Move the camera
+- `Drag` (mouse): Move camera
 - `Scroll` wheel: Zoom in/out
 - `Space`: Pause/resume simulation
 - `R`: Trigger a fresh Big Bang reset
-- `H`: Toggle help overlay
-
-## Simulation Notes
-
-- The simulation starts with a single Big Bang event near world center.
-- Particle interactions are local and force-based.
-- `Amor` particles strongly attract all archetypes and act as social/cohesive catalysts.
-- Motion damping and soft world bounds keep the system stable enough for long observation.
-
-## Best Practices For Contemplative Particle Simulations
-
-- Prefer gentle gradients and low visual noise over aggressive effects
-- Keep controls discoverable but minimal
-- Favor emergent behavior over scripted outcomes
-- Track frame rate and entity counts to preserve meditative flow
-- Keep symbolic language clear: mechanics should reflect the intended philosophy
-
-## Future Ideas
-
-- Add configurable force sliders for each archetype interaction
-- Add particle birth/death evolution rules from `Universe_Rules.md`
-- Introduce bond visualization for long-term Love connections
-- Add timeline recording/replay mode for pattern observation
-- Add presets (Calm, Turbulent, Harmonic, Entropic)
-- Add accessibility options (high contrast mode, reduced motion mode)
-- Add deterministic seed support for reproducible universes
+- `H`: Toggle help text
 
 ## License
 
