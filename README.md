@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.3` - Simulation timer/extinction analytics, larger wrap-around universe, live workload metrics, and hot-loop allocation optimizations.
 - `v1.3.2` - Big Bang explosion-only first second, stronger residual history trimming, and HUD phase/residual debug line.
 - `v1.3.1` - Rule-engine expansion (birth/death/special behaviors), post-Big-Bang non-overlap spacing, and tap-to-inspect particle stat cards.
 - `v1.3.0` - Mobile-first vertical controls, touch-friendly pinch+drag camera, adaptive dimming HUD, and per-archetype live counts.
@@ -13,6 +14,13 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.3`
+
+- Added simulation timer plus current-run extinction time and rolling extinction average across runs.
+- Expanded world space and switched to wrap-around boundaries (particles re-enter from opposite edge).
+- Added HUD workload metrics (substeps/frame and interaction checks/second) to monitor performance pressure.
+- Optimized core loop allocations by reusing hot-path arrays/maps/sets and typed nearby counters to reduce GC churn.
 
 ### `v1.3.2`
 
