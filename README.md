@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.10` - Setup and simulation are now fully separated; `Universe_Rules.md` synced to strict setup-first start and run-summary CSV behavior.
 - `v1.3.9` - CSV logging switched to run-summary rows (single row per run with in-place updates) for both individual and auto sessions.
 - `v1.3.8` - Strict setup-mode input isolation to prevent runtime interaction while editing session parameters.
 - `v1.3.7` - Startup overlay stability hardening and visual universe boundary with black outside-space rendering.
@@ -20,6 +21,11 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.10`
+
+- Enforced hard separation between setup and runtime so the simulation does not mount/run before explicit session start.
+- Synced `Universe_Rules.md` to current behavior, including setup-first flow and run-summary CSV lifecycle semantics.
 
 ### `v1.3.9`
 

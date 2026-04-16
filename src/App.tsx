@@ -796,6 +796,9 @@ function App() {
   }, [initRunSummary, resetUniverse]);
 
   useEffect(() => {
+    if (setupOpen) {
+      return;
+    }
     const canvas = canvasRef.current;
     if (!canvas) {
       return;
@@ -1627,7 +1630,7 @@ function App() {
         window.cancelAnimationFrame(rafRef.current);
       }
     };
-  }, []);
+  }, [setupOpen]);
 
   const archetypeLegend = useMemo(
     () =>
@@ -1648,146 +1651,9 @@ function App() {
     setAutoRestartCountdown(null);
   }, [initRunSummary, resetUniverse]);
 
-  return (
-    <main className="app">
-      <canvas ref={canvasRef} className="simulation-canvas" />
-
-      <div
-        className={`hud-layer ${hudAwake ? "is-awake" : ""}`}
-        onPointerDownCapture={wakeHud}
-        onPointerMoveCapture={wakeHud}
-      >
-        <section className="panel">
-          <div className="title-row">
-            <span className="pulse-dot" />
-            <strong>Universe Game v1.3.9</strong>
-          </div>
-          <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
-          <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
-          <p className="dim">Adaptive Performance: {currentConfigRef.current.adaptivePerformanceMode ? "On" : "Off"}</p>
-          <p className="dim">CSV: {csvStatus}</p>
-          {sessionMode === "auto" ? <p className="dim">Auto progress: {autoRunCompleted}/{autoRunTargetRef.current}</p> : null}
-          <p className="dim">State: {paused ? "Paused" : "Running"} | Time: {timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</p>
-          <p className="dim">World: {WORLD_SIZE} x {WORLD_SIZE} (wrap)</p>
-          <p className="dim">
-            Sim Timer: {elapsedSimSeconds.toFixed(1)}s
-            {extinctionSeconds !== null ? ` | Extinction: ${extinctionSeconds.toFixed(1)}s` : ""}
-          </p>
-          <p className="dim">
-            Extinction Avg ({extinctionCount} run{extinctionCount === 1 ? "" : "s"}):{" "}
-            {extinctionAvgSeconds !== null ? `${extinctionAvgSeconds.toFixed(1)}s` : "-"}
-          </p>
-          <p className="dim">Phase: {explosionPhaseActive ? "Explosion" : "Rules Active"} | Residuals: {residualCount}</p>
-          <p className="dim">
-            Workload: substeps/frame {substepsPerFrame.toFixed(2)} | interaction checks/s {interactionChecksPerSecond.toLocaleString()}
-          </p>
-          <p className="dim">Ambient: {isMusicPlaying ? "Playing" : "Off"} (optional)</p>
-          <div className="legend dim">
-            {archetypeLegend.map((entry) => (
-              <span key={entry.name}>
-                <span className="chip" style={{ background: entry.color }} />
-                {entry.name}: {entry.count}
-              </span>
-            ))}
-          </div>
-          {showHelp ? (
-            <p className="dim">Drag: pan • Pinch/Scroll: zoom • Space: pause • R: reset • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance</p>
-          ) : null}
-        </section>
-
-        <div className="controls">
-          <div className="slider-stack">
-            <label className="vertical-control" htmlFor="zoom-control">
-              <span>Zoom</span>
-              <input
-                id="zoom-control"
-                type="range"
-                min={0}
-                max={1}
-                step={0.001}
-                value={zoomSliderValue}
-                onChange={(event) => {
-                  wakeHud();
-                  setZoomFromSlider(Number(event.currentTarget.value));
-                }}
-              />
-              <strong>{cameraZoom.toFixed(cameraZoom < 0.1 ? 3 : 2)}x</strong>
-            </label>
-
-            <label className="vertical-control" htmlFor="time-scale">
-              <span>Time</span>
-              <input
-                id="time-scale"
-                type="range"
-                min={0}
-                max={1}
-                step={0.001}
-                value={sliderValue}
-                onChange={(event) => {
-                  wakeHud();
-                  setTimeScaleFromSlider(Number(event.currentTarget.value));
-                }}
-              />
-              <strong>{timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</strong>
-            </label>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              wakeHud();
-              setPaused((value) => !value);
-            }}
-          >
-            {paused ? "Resume" : "Pause"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              wakeHud();
-              void toggleAmbientMusic();
-            }}
-          >
-            {isMusicPlaying ? "Pause Ambient" : "Play Ambient"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              wakeHud();
-              currentRunIndexRef.current += 1;
-              resetUniverse(currentConfigRef.current);
-              nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-              initRunSummary(sessionModeRef.current ?? "individual", currentRunIndexRef.current, currentConfigRef.current);
-            }}
-          >
-            Big Bang Reset
-          </button>
-        </div>
-      </div>
-
-      {extinctionNotice ? (
-        <div className="event-overlay">
-          <section className="event-card">
-            <h3>Extinction Event!</h3>
-            <p>{extinctionNotice}</p>
-            {sessionMode === "individual" ? (
-              <button
-                type="button"
-                onClick={() => {
-                  wakeHud();
-                  restartAfterExtinction();
-                }}
-              >
-                Restart Universe
-              </button>
-            ) : autoRestartCountdown !== null ? (
-              <p className="dim">Auto restart in {autoRestartCountdown}s...</p>
-            ) : null}
-          </section>
-        </div>
-      ) : null}
-
-      {setupOpen ? (
+  if (setupOpen) {
+    return (
+      <main className="app">
         <div className="startup-overlay">
           <section
             className="startup-card"
@@ -2066,7 +1932,149 @@ function App() {
             </div>
           </section>
         </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="app">
+      <canvas ref={canvasRef} className="simulation-canvas" />
+
+      <div
+        className={`hud-layer ${hudAwake ? "is-awake" : ""}`}
+        onPointerDownCapture={wakeHud}
+        onPointerMoveCapture={wakeHud}
+      >
+        <section className="panel">
+          <div className="title-row">
+            <span className="pulse-dot" />
+            <strong>Universe Game v1.3.9</strong>
+          </div>
+          <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
+          <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
+          <p className="dim">Adaptive Performance: {currentConfigRef.current.adaptivePerformanceMode ? "On" : "Off"}</p>
+          <p className="dim">CSV: {csvStatus}</p>
+          {sessionMode === "auto" ? <p className="dim">Auto progress: {autoRunCompleted}/{autoRunTargetRef.current}</p> : null}
+          <p className="dim">State: {paused ? "Paused" : "Running"} | Time: {timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</p>
+          <p className="dim">World: {WORLD_SIZE} x {WORLD_SIZE} (wrap)</p>
+          <p className="dim">
+            Sim Timer: {elapsedSimSeconds.toFixed(1)}s
+            {extinctionSeconds !== null ? ` | Extinction: ${extinctionSeconds.toFixed(1)}s` : ""}
+          </p>
+          <p className="dim">
+            Extinction Avg ({extinctionCount} run{extinctionCount === 1 ? "" : "s"}):{" "}
+            {extinctionAvgSeconds !== null ? `${extinctionAvgSeconds.toFixed(1)}s` : "-"}
+          </p>
+          <p className="dim">Phase: {explosionPhaseActive ? "Explosion" : "Rules Active"} | Residuals: {residualCount}</p>
+          <p className="dim">
+            Workload: substeps/frame {substepsPerFrame.toFixed(2)} | interaction checks/s {interactionChecksPerSecond.toLocaleString()}
+          </p>
+          <p className="dim">Ambient: {isMusicPlaying ? "Playing" : "Off"} (optional)</p>
+          <div className="legend dim">
+            {archetypeLegend.map((entry) => (
+              <span key={entry.name}>
+                <span className="chip" style={{ background: entry.color }} />
+                {entry.name}: {entry.count}
+              </span>
+            ))}
+          </div>
+          {showHelp ? (
+            <p className="dim">Drag: pan • Pinch/Scroll: zoom • Space: pause • R: reset • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance</p>
+          ) : null}
+        </section>
+
+        <div className="controls">
+          <div className="slider-stack">
+            <label className="vertical-control" htmlFor="zoom-control">
+              <span>Zoom</span>
+              <input
+                id="zoom-control"
+                type="range"
+                min={0}
+                max={1}
+                step={0.001}
+                value={zoomSliderValue}
+                onChange={(event) => {
+                  wakeHud();
+                  setZoomFromSlider(Number(event.currentTarget.value));
+                }}
+              />
+              <strong>{cameraZoom.toFixed(cameraZoom < 0.1 ? 3 : 2)}x</strong>
+            </label>
+
+            <label className="vertical-control" htmlFor="time-scale">
+              <span>Time</span>
+              <input
+                id="time-scale"
+                type="range"
+                min={0}
+                max={1}
+                step={0.001}
+                value={sliderValue}
+                onChange={(event) => {
+                  wakeHud();
+                  setTimeScaleFromSlider(Number(event.currentTarget.value));
+                }}
+              />
+              <strong>{timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</strong>
+            </label>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              wakeHud();
+              setPaused((value) => !value);
+            }}
+          >
+            {paused ? "Resume" : "Pause"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              wakeHud();
+              void toggleAmbientMusic();
+            }}
+          >
+            {isMusicPlaying ? "Pause Ambient" : "Play Ambient"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              wakeHud();
+              currentRunIndexRef.current += 1;
+              resetUniverse(currentConfigRef.current);
+              nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+              initRunSummary(sessionModeRef.current ?? "individual", currentRunIndexRef.current, currentConfigRef.current);
+            }}
+          >
+            Big Bang Reset
+          </button>
+        </div>
+      </div>
+
+      {extinctionNotice ? (
+        <div className="event-overlay">
+          <section className="event-card">
+            <h3>Extinction Event!</h3>
+            <p>{extinctionNotice}</p>
+            {sessionMode === "individual" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  wakeHud();
+                  restartAfterExtinction();
+                }}
+              >
+                Restart Universe
+              </button>
+            ) : autoRestartCountdown !== null ? (
+              <p className="dim">Auto restart in {autoRestartCountdown}s...</p>
+            ) : null}
+          </section>
+        </div>
       ) : null}
+
     </main>
   );
 }

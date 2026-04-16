@@ -1,6 +1,6 @@
 # Universe Game - Fundamental Rules (Current Implementation)
 
-**Version:** `v1.3.5`
+**Version:** `v1.3.10`
 
 This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 
@@ -28,11 +28,13 @@ Default starting counts (editable at session start):
 
 - **Individual session:** one configured universe at a time (manual reset available).
 - **Auto mode:** randomized parameter set per run; each run advances automatically after extinction until target run count is reached.
+- **Strict setup-first flow:** while setup is open, simulation canvas/loop/input listeners are not mounted; the universe starts only after explicit `Start`.
 
 ## Big Bang and Phase Timing
 
 - Simulation does **not** auto-start on app load.
 - User selects mode and parameters first.
+- Parameter edits on setup do not affect any running world in the background because no run exists yet.
 - Run starts with a **Big Bang explosion phase** (~1 sim second) where pairwise rule behavior is temporarily simplified to outward expansion.
 - After explosion phase, full interaction rules apply.
 
@@ -98,13 +100,13 @@ HUD includes:
 
 At session start, the app prompts for a CSV save target (when browser supports File System Access API).
 
-Logged event types:
+Logging model:
 
-- `run_start`
-- periodic `checkpoint`
-- `extinction`
+- **Run-summary rows (not event rows):** one evolving row per run.
+- **Individual mode:** one row for the current universe run, updated at checkpoints/extinction.
+- **Auto mode:** one row per tested universe run, each updated through that run lifecycle.
 
-Each row stores run metadata, key tunable parameters, and runtime metrics for later analysis.
+Each row stores run metadata, tunable parameters, and key runtime metrics for later analysis without unbounded event-row growth.
 
 ---
 
