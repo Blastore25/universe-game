@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.14` - **Static Universe** rename and rule: 2000 sim seconds with **no** change in total or non-Amor counts; docs distinguish ecological **stable** (oscillating) universe vs **static** detection; sim timer explicitly tied to Time control.
 - `v1.3.13` - Stable-universe detection: population equilibrium pauses the sim with restart (individual) or auto-advance (auto), CSV `stable` status and `stable_seconds` column.
 - `v1.3.12` - Fix setup crash from stale `event.currentTarget` in state updaters; debug log off by default and rAF-batched for smooth typing.
 - `v1.3.11` - Setup debug console (in-app + console), global error/rejection capture, and setup input tracing to diagnose startup issues.
@@ -24,6 +25,12 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.14`
+
+- Renamed outcome to **Static Universe**; CSV uses `status=static` and column `static_seconds` (replaces `stable` / `stable_seconds`).
+- Static detection now requires **2000 sim seconds** with **identical** total and non-Amor counts (per substep), after the explosion phase.
+- Documented **stable universe** as an ecological concept (sinusoidal birth/death waves)—not auto-detected—and clarified that **sim seconds scale with the Time control**.
 
 ### `v1.3.13`
 
