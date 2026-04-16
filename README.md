@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.8` - Strict setup-mode input isolation to prevent runtime interaction while editing session parameters.
 - `v1.3.7` - Startup overlay stability hardening and visual universe boundary with black outside-space rendering.
 - `v1.3.6` - Durable per-row CSV writes, adaptive performance controls, non-extinguishable Amor semantics, and extinction event restart overlays.
 - `v1.3.5` - Updated English universe rules documentation synced to runtime behavior and experiment workflow.
@@ -18,6 +19,10 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.8`
+
+- Added strict setup-open input and simulation gating so canvas/loop interactions remain inert until explicit session start.
 
 ### `v1.3.7`
 

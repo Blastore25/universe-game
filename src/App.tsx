@@ -257,6 +257,7 @@ function App() {
   const [pendingConfig, setPendingConfig] = useState<SessionConfig>(DEFAULT_SESSION_CONFIG);
   const [autoRunTarget, setAutoRunTarget] = useState(10);
   const [sessionMode, setSessionMode] = useState<SessionMode | null>(null);
+  const [setupOpen, setSetupOpen] = useState(true);
   const [timeScale, setTimeScale] = useState(1);
   const [cameraZoom, setCameraZoom] = useState(0.65);
   const [fps, setFps] = useState(0);
@@ -306,6 +307,7 @@ function App() {
   const rafRef = useRef<number | null>(null);
   const selectedParticleIdRef = useRef<number | null>(null);
   const sessionModeRef = useRef<SessionMode | null>(null);
+  const setupOpenRef = useRef(true);
   const frameCounterRef = useRef(0);
   const currentConfigRef = useRef<SessionConfig>(DEFAULT_SESSION_CONFIG);
   const autoRunTargetRef = useRef(0);
@@ -354,6 +356,10 @@ function App() {
   useEffect(() => {
     sessionModeRef.current = sessionMode;
   }, [sessionMode]);
+
+  useEffect(() => {
+    setupOpenRef.current = setupOpen;
+  }, [setupOpen]);
 
   const sliderValue = useMemo(() => {
     return (Math.log10(timeScale) - TIME_SCALE_LOG_MIN) / (TIME_SCALE_LOG_MAX - TIME_SCALE_LOG_MIN);
@@ -629,6 +635,7 @@ function App() {
   const startSession = useCallback(
     async (mode: SessionMode) => {
       await openSessionCsv(mode);
+      setSetupOpen(false);
       setSessionMode(mode);
       setAutoRunCompleted(0);
       extinctionCountRef.current = 0;
@@ -729,6 +736,9 @@ function App() {
     window.addEventListener("resize", resizeCanvas);
 
     const onPointerDown = (event: PointerEvent) => {
+      if (setupOpenRef.current) {
+        return;
+      }
       activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
       const activePointers = [...activePointersRef.current.values()];
       if (activePointers.length >= 2) {
@@ -748,6 +758,9 @@ function App() {
     };
 
     const onPointerMove = (event: PointerEvent) => {
+      if (setupOpenRef.current) {
+        return;
+      }
       if (!activePointersRef.current.has(event.pointerId)) {
         return;
       }
@@ -792,6 +805,9 @@ function App() {
     };
 
     const onPointerUp = (event: PointerEvent) => {
+      if (setupOpenRef.current) {
+        return;
+      }
       const wasTap = !pinchRef.current.isPinching && !dragRef.current.moved;
       activePointersRef.current.delete(event.pointerId);
       const remainingPointers = [...activePointersRef.current.values()];
@@ -834,6 +850,9 @@ function App() {
     };
 
     const onWheel = (event: WheelEvent) => {
+      if (setupOpenRef.current) {
+        return;
+      }
       event.preventDefault();
       const factor = event.deltaY > 0 ? 0.9 : 1.12;
       const camera = cameraRef.current;
@@ -868,6 +887,11 @@ function App() {
       // Inside universe area keeps the simulation background tone.
       ctx.fillStyle = "rgba(10, 10, 31, 1)";
       ctx.fillRect(boundaryLeft, boundaryTop, boundarySize, boundarySize);
+
+      if (setupOpenRef.current) {
+        rafRef.current = window.requestAnimationFrame(drawFrame);
+        return;
+      }
 
       if (!pausedRef.current) {
         const frameScale = (frameDeltaMs / 16.666) * timeScaleRef.current;
@@ -1545,7 +1569,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.7</strong>
+            <strong>Universe Game v1.3.8</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
@@ -1672,7 +1696,7 @@ function App() {
         </div>
       ) : null}
 
-      {sessionMode === null ? (
+      {setupOpen ? (
         <div className="startup-overlay">
           <section
             className="startup-card"
