@@ -1,6 +1,6 @@
 # Universe Game - Fundamental Rules (Current Implementation)
 
-**Version:** `v1.3.10`
+**Version:** `v1.3.11`
 
 This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 
@@ -95,6 +95,8 @@ HUD includes:
 - phase state and residual count
 - workload indicators (substeps/frame and interaction checks/s)
 - session mode and CSV logging status
+
+During setup, an optional **Setup Debug Console** logs input/change events and captures `window.error` / `unhandledrejection` so startup issues can be diagnosed from the UI.
 
 ## CSV Experiment Logging
 

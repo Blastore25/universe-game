@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.11` - Setup debug console (in-app + console), global error/rejection capture, and setup input tracing to diagnose startup issues.
 - `v1.3.10` - Setup and simulation are now fully separated; `Universe_Rules.md` synced to strict setup-first start and run-summary CSV behavior.
 - `v1.3.9` - CSV logging switched to run-summary rows (single row per run with in-place updates) for both individual and auto sessions.
 - `v1.3.8` - Strict setup-mode input isolation to prevent runtime interaction while editing session parameters.
@@ -21,6 +22,12 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.11`
+
+- Added setup-screen debug console with toggle, input/change/pointer/key/wheel capture logging, and `startSession` trace lines.
+- Added `window.error` and `unhandledrejection` listeners so runtime failures surface in the setup debug log during reproduction.
+- Hardened setup form with string draft parsing; HUD version label aligned to release.
 
 ### `v1.3.10`
 

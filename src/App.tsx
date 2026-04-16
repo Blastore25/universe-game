@@ -338,6 +338,8 @@ function App() {
   const [hudAwake, setHudAwake] = useState(false);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
   const [selectedParticleId, setSelectedParticleId] = useState<number | null>(null);
+  const [setupDebugEnabled, setSetupDebugEnabled] = useState(true);
+  const [setupDebugEvents, setSetupDebugEvents] = useState<string[]>([]);
 
   const particlesRef = useRef<Particle[]>([]);
   const residualsRef = useRef<ResidualFrequency[]>([]);
@@ -399,6 +401,7 @@ function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const ambientGainRef = useRef<GainNode | null>(null);
   const ambientNodesRef = useRef<OscillatorNode[]>([]);
+  const setupDebugEnabledRef = useRef(true);
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -419,6 +422,10 @@ function App() {
   useEffect(() => {
     setupOpenRef.current = setupOpen;
   }, [setupOpen]);
+
+  useEffect(() => {
+    setupDebugEnabledRef.current = setupDebugEnabled;
+  }, [setupDebugEnabled]);
 
   const sliderValue = useMemo(() => {
     return (Math.log10(timeScale) - TIME_SCALE_LOG_MIN) / (TIME_SCALE_LOG_MAX - TIME_SCALE_LOG_MIN);
@@ -459,6 +466,19 @@ function App() {
       setHudAwake(false);
       hudDimTimeoutRef.current = null;
     }, HUD_DIM_TIMEOUT_MS);
+  }, []);
+
+  const appendSetupDebug = useCallback((message: string) => {
+    if (!setupDebugEnabledRef.current) {
+      return;
+    }
+    const timestamp = new Date().toISOString().slice(11, 23);
+    const line = `[${timestamp}] ${message}`;
+    console.debug(`[setup-debug] ${line}`);
+    setSetupDebugEvents((prev) => {
+      const next = [...prev, line];
+      return next.length > 80 ? next.slice(next.length - 80) : next;
+    });
   }, []);
 
   const toCsvCell = useCallback((value: string | number) => {
@@ -816,6 +836,7 @@ function App() {
 
   const startSession = useCallback(
     async (mode: SessionMode, baseConfig: SessionConfig, autoRuns: number) => {
+      appendSetupDebug(`startSession begin: mode=${mode}, autoRuns=${autoRuns}`);
       await openSessionCsv(mode);
       setSetupOpen(false);
       setSessionMode(mode);
@@ -830,12 +851,25 @@ function App() {
       resetUniverse(runConfig);
       nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
       initRunSummary(mode, currentRunIndexRef.current, runConfig);
+      appendSetupDebug("startSession complete");
     },
-    [initRunSummary, openSessionCsv, randomConfig, resetUniverse]
+    [appendSetupDebug, initRunSummary, openSessionCsv, randomConfig, resetUniverse]
   );
 
   useEffect(() => {
+    const onWindowError = (event: ErrorEvent) => {
+      appendSetupDebug(`window.error: ${event.message}${event.filename ? ` @ ${event.filename}:${event.lineno}:${event.colno}` : ""}`);
+    };
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason instanceof Error ? `${event.reason.name}: ${event.reason.message}` : String(event.reason);
+      appendSetupDebug(`unhandledrejection: ${reason}`);
+    };
+    window.addEventListener("error", onWindowError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+
     return () => {
+      window.removeEventListener("error", onWindowError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
       if (hudDimTimeoutRef.current !== null) {
         window.clearTimeout(hudDimTimeoutRef.current);
       }
@@ -854,7 +888,7 @@ function App() {
         autoRestartTimeoutRef.current = null;
       }
     };
-  }, [stopAmbientMusic]);
+  }, [appendSetupDebug, stopAmbientMusic]);
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
@@ -1753,18 +1787,51 @@ function App() {
             className="startup-card"
             onPointerDownCapture={(event) => {
               event.stopPropagation();
+              appendSetupDebug(`pointerdown: ${(event.target as HTMLElement).tagName}`);
             }}
             onWheelCapture={(event) => {
               event.stopPropagation();
+              appendSetupDebug(`wheel: deltaY=${event.deltaY.toFixed(2)}`);
             }}
             onKeyDownCapture={(event) => {
+              appendSetupDebug(`keydown: key=${event.key}`);
               if (event.key === "Enter") {
                 event.preventDefault();
               }
             }}
+            onInputCapture={(event) => {
+              const target = event.target as HTMLInputElement | HTMLTextAreaElement | null;
+              if (!target) {
+                return;
+              }
+              const id = (target as HTMLInputElement).name || target.id || target.tagName;
+              const value =
+                target instanceof HTMLInputElement && target.type === "checkbox" ? String(target.checked) : (target as HTMLInputElement).value;
+              appendSetupDebug(`input: ${id}=${value}`);
+            }}
+            onChangeCapture={(event) => {
+              const target = event.target as HTMLInputElement | HTMLTextAreaElement | null;
+              if (!target) {
+                return;
+              }
+              const id = (target as HTMLInputElement).name || target.id || target.tagName;
+              const value =
+                target instanceof HTMLInputElement && target.type === "checkbox" ? String(target.checked) : (target as HTMLInputElement).value;
+              appendSetupDebug(`change: ${id}=${value}`);
+            }}
           >
             <h2>Choose Session Mode</h2>
             <p>Configure parameters before the first Big Bang. CSV save prompt appears at start.</p>
+            <label className="startup-toggle">
+              <span>Setup debug log</span>
+              <input
+                type="checkbox"
+                checked={setupDebugEnabled}
+                onChange={(event) => {
+                  setSetupDebugEnabled(event.currentTarget.checked);
+                }}
+              />
+            </label>
             <div className="startup-mode-toggle">
               <button type="button" onClick={() => setStartupMode("individual")} className={startupMode === "individual" ? "is-active" : ""}>
                 Individual
@@ -1777,6 +1844,7 @@ function App() {
               <label>
                 Pulse
                 <input
+                  name="pulse"
                   type="number"
                   min={0}
                   value={setupDraft.counts.PULSE}
@@ -1791,6 +1859,7 @@ function App() {
               <label>
                 Bloom
                 <input
+                  name="bloom"
                   type="number"
                   min={0}
                   value={setupDraft.counts.BLOOM}
@@ -1805,6 +1874,7 @@ function App() {
               <label>
                 Echo
                 <input
+                  name="echo"
                   type="number"
                   min={0}
                   value={setupDraft.counts.ECHO}
@@ -1819,6 +1889,7 @@ function App() {
               <label>
                 Void
                 <input
+                  name="void"
                   type="number"
                   min={0}
                   value={setupDraft.counts.VOID}
@@ -1833,6 +1904,7 @@ function App() {
               <label>
                 Amor
                 <input
+                  name="amor"
                   type="number"
                   min={0}
                   value={setupDraft.counts.AMOR}
@@ -1847,6 +1919,7 @@ function App() {
               <label>
                 Max particles
                 <input
+                  name="max-particles"
                   type="number"
                   min={100}
                   max={10000}
@@ -1984,13 +2057,41 @@ function App() {
                 type="button"
                 onClick={async () => {
                   wakeHud();
-                  const parsed = parseSetupSession();
-                  await startSession(startupMode, parsed.config, parsed.autoRuns);
+                  try {
+                    const parsed = parseSetupSession();
+                    appendSetupDebug(`start-click: pulse=${parsed.config.counts.PULSE}, max=${parsed.config.maxParticles}`);
+                    await startSession(startupMode, parsed.config, parsed.autoRuns);
+                  } catch (error) {
+                    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+                    appendSetupDebug(`start-click error: ${message}`);
+                    throw error;
+                  }
                 }}
               >
                 Start {startupMode === "individual" ? "Individual Session" : "Auto Mode"}
               </button>
             </div>
+            {setupDebugEnabled ? (
+              <div style={{ marginTop: 12, border: "1px solid rgba(255,255,255,0.16)", borderRadius: 10, padding: 10 }}>
+                <p className="dim" style={{ marginBottom: 8 }}>
+                  Setup Debug Console
+                </p>
+                <div
+                  style={{
+                    maxHeight: 170,
+                    overflowY: "auto",
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    fontSize: 11,
+                    lineHeight: 1.4
+                  }}
+                >
+                  {setupDebugEvents.length === 0 ? <div className="dim">No events yet.</div> : null}
+                  {setupDebugEvents.map((line, index) => (
+                    <div key={`${line}-${index}`}>{line}</div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </section>
         </div>
       </main>
@@ -2009,7 +2110,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.9</strong>
+            <strong>Universe Game v1.3.11</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
