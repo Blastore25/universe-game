@@ -112,6 +112,24 @@ interface SessionConfig {
   adaptivePerformanceMode: boolean;
 }
 
+interface RunSummary {
+  sessionId: string;
+  mode: SessionMode;
+  runIndex: number;
+  status: "ongoing" | "extinct";
+  simSeconds: number;
+  extinctionSeconds: number | null;
+  particlesInitial: number;
+  particlesPeak: number;
+  nonAmorMin: number;
+  nonAmorMax: number;
+  nonAmorCurrent: number;
+  residualPeak: number;
+  checkpointCount: number;
+  historyBrief: string;
+  config: SessionConfig;
+}
+
 const DEFAULT_SESSION_CONFIG: SessionConfig = {
   counts: { ...BIG_BANG_COUNTS },
   maxParticles: 1200,
@@ -315,9 +333,9 @@ function App() {
   const sessionIdRef = useRef<string>("");
   const nextCheckpointStepRef = useRef(CHECKPOINT_INTERVAL_STEPS);
   const csvFileHandleRef = useRef<FileSystemFileHandle | null>(null);
-  const csvByteOffsetRef = useRef(0);
   const csvWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const csvFallbackRowsRef = useRef<string[]>([]);
+  const runSummariesRef = useRef<Map<number, RunSummary>>(new Map());
   const autoRestartTimeoutRef = useRef<number | null>(null);
   const extinctionRecordedRef = useRef(false);
   const extinctionCountRef = useRef(0);
@@ -410,57 +428,157 @@ function App() {
     return str;
   }, []);
 
-  const enqueueCsvLine = useCallback((line: string) => {
-    const handle = csvFileHandleRef.current;
-    if (!handle) {
-      csvFallbackRowsRef.current.push(line);
-      return;
-    }
-    const encoder = new TextEncoder();
-    const payload = `${line}\n`;
-    const bytes = encoder.encode(payload).byteLength;
-    csvWriteChainRef.current = csvWriteChainRef.current.then(async () => {
-      const writable = await handle.createWritable({ keepExistingData: true });
-      await writable.write({ type: "write", position: csvByteOffsetRef.current, data: payload });
-      await writable.close();
-      csvByteOffsetRef.current += bytes;
-    });
-  }, []);
-
-  const logRunEvent = useCallback(
-    (event: "run_start" | "checkpoint" | "extinction", simSeconds: number, particlesNow: number, residualsNow: number) => {
-      const cfg = currentConfigRef.current;
-      const row = [
-        sessionIdRef.current,
-        sessionModeRef.current ?? "unknown",
-        currentRunIndexRef.current,
-        event,
-        simSeconds.toFixed(3),
-        particlesNow,
-        residualsNow,
-        cfg.counts.PULSE,
-        cfg.counts.BLOOM,
-        cfg.counts.ECHO,
-        cfg.counts.VOID,
-        cfg.counts.AMOR,
-        cfg.maxParticles,
-        cfg.attractionScale,
-        cfg.sameTypeRepulsion,
-        cfg.amorPairForce,
-        cfg.influenceTtlBase,
-        cfg.influenceTtlExplosionBase,
-        cfg.lowPopulationThreshold,
-        cfg.lowPopulationDeathScale,
-        cfg.rarityBirthBoost,
-        cfg.diversityFloor,
-        cfg.loveDeathProtection,
-        cfg.adaptivePerformanceMode ? 1 : 0
+  const toSummaryRow = useCallback(
+    (summary: RunSummary) =>
+      [
+        summary.sessionId,
+        summary.mode,
+        summary.runIndex,
+        summary.status,
+        summary.simSeconds.toFixed(3),
+        summary.extinctionSeconds === null ? "" : summary.extinctionSeconds.toFixed(3),
+        summary.particlesInitial,
+        summary.particlesPeak,
+        summary.nonAmorMin,
+        summary.nonAmorMax,
+        summary.nonAmorCurrent,
+        summary.residualPeak,
+        summary.checkpointCount,
+        summary.historyBrief,
+        summary.config.counts.PULSE,
+        summary.config.counts.BLOOM,
+        summary.config.counts.ECHO,
+        summary.config.counts.VOID,
+        summary.config.counts.AMOR,
+        summary.config.maxParticles,
+        summary.config.attractionScale,
+        summary.config.sameTypeRepulsion,
+        summary.config.amorPairForce,
+        summary.config.influenceTtlBase,
+        summary.config.influenceTtlExplosionBase,
+        summary.config.lowPopulationThreshold,
+        summary.config.lowPopulationDeathScale,
+        summary.config.rarityBirthBoost,
+        summary.config.diversityFloor,
+        summary.config.loveDeathProtection,
+        summary.config.adaptivePerformanceMode ? 1 : 0
       ]
         .map(toCsvCell)
-        .join(",");
-      enqueueCsvLine(row);
+        .join(","),
+    [toCsvCell]
+  );
+
+  const flushCsvSummaries = useCallback(() => {
+    const header = [
+      "session_id",
+      "mode",
+      "run_index",
+      "status",
+      "sim_seconds",
+      "extinction_seconds",
+      "particles_initial",
+      "particles_peak",
+      "non_amor_min",
+      "non_amor_max",
+      "non_amor_current",
+      "residual_peak",
+      "checkpoint_count",
+      "history_brief",
+      "count_pulse",
+      "count_bloom",
+      "count_echo",
+      "count_void",
+      "count_amor",
+      "max_particles",
+      "attraction_scale",
+      "same_type_repulsion",
+      "amor_pair_force",
+      "influence_ttl_base",
+      "influence_ttl_explosion_base",
+      "low_population_threshold",
+      "low_population_death_scale",
+      "rarity_birth_boost",
+      "diversity_floor",
+      "love_death_protection",
+      "adaptive_performance_mode"
+    ].join(",");
+    const lines = [header];
+    const runs = [...runSummariesRef.current.values()].sort((a, b) => a.runIndex - b.runIndex);
+    for (const run of runs) {
+      lines.push(toSummaryRow(run));
+    }
+    const content = `${lines.join("\n")}\n`;
+    const handle = csvFileHandleRef.current;
+    if (!handle) {
+      csvFallbackRowsRef.current = lines;
+      return;
+    }
+    csvWriteChainRef.current = csvWriteChainRef.current.then(async () => {
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+    });
+  }, [toSummaryRow]);
+
+  const upsertRunSummary = useCallback(
+    (patch: Partial<RunSummary> & { runIndex: number }) => {
+      const existing = runSummariesRef.current.get(patch.runIndex);
+      if (!existing) {
+        return;
+      }
+      const next = { ...existing, ...patch };
+      runSummariesRef.current.set(patch.runIndex, next);
     },
-    [enqueueCsvLine, toCsvCell]
+    []
+  );
+
+  const initRunSummary = useCallback((mode: SessionMode, runIndex: number, config: SessionConfig) => {
+    const initial = Object.values(config.counts).reduce((sum, n) => sum + n, 0);
+    const nonAmorInitial = initial - config.counts.AMOR;
+    runSummariesRef.current.set(runIndex, {
+      sessionId: sessionIdRef.current,
+      mode,
+      runIndex,
+      status: "ongoing",
+      simSeconds: 0,
+      extinctionSeconds: null,
+      particlesInitial: initial,
+      particlesPeak: initial,
+      nonAmorMin: nonAmorInitial,
+      nonAmorMax: nonAmorInitial,
+      nonAmorCurrent: nonAmorInitial,
+      residualPeak: 0,
+      checkpointCount: 0,
+      historyBrief: "initializing",
+      config
+    });
+    flushCsvSummaries();
+  }, [flushCsvSummaries]);
+
+  const updateCurrentRunSummary = useCallback(
+    (simSeconds: number, particlesNow: number, nonAmorNow: number, residualsNow: number, extinct: boolean) => {
+      const run = runSummariesRef.current.get(currentRunIndexRef.current);
+      if (!run) {
+        return;
+      }
+      const nextCheckpointCount = run.checkpointCount + (simSeconds >= nextCheckpointStepRef.current / 60 ? 1 : 0);
+      const next: RunSummary = {
+        ...run,
+        status: extinct ? "extinct" : "ongoing",
+        simSeconds,
+        extinctionSeconds: extinct ? simSeconds : run.extinctionSeconds,
+        particlesPeak: Math.max(run.particlesPeak, particlesNow),
+        nonAmorMin: Math.min(run.nonAmorMin, nonAmorNow),
+        nonAmorMax: Math.max(run.nonAmorMax, nonAmorNow),
+        nonAmorCurrent: nonAmorNow,
+        residualPeak: Math.max(run.residualPeak, residualsNow),
+        checkpointCount: nextCheckpointCount
+      };
+      next.historyBrief = `nonAmor[min:${next.nonAmorMin},max:${next.nonAmorMax},last:${next.nonAmorCurrent}] peakParticles:${next.particlesPeak} peakResiduals:${next.residualPeak}`;
+      runSummariesRef.current.set(currentRunIndexRef.current, next);
+      flushCsvSummaries();
+    },
+    [flushCsvSummaries]
   );
 
   const randomConfig = useCallback((): SessionConfig => {
@@ -582,40 +700,12 @@ function App() {
   const openSessionCsv = useCallback(async (mode: SessionMode) => {
     sessionIdRef.current = `${mode}-${new Date().toISOString().replace(/:/g, "-")}`;
     csvFallbackRowsRef.current = [];
+    runSummariesRef.current.clear();
     csvFileHandleRef.current = null;
-    csvByteOffsetRef.current = 0;
-    const header = [
-      "session_id",
-      "mode",
-      "run_index",
-      "event",
-      "sim_seconds",
-      "particles",
-      "residuals",
-      "count_pulse",
-      "count_bloom",
-      "count_echo",
-      "count_void",
-      "count_amor",
-      "max_particles",
-      "attraction_scale",
-      "same_type_repulsion",
-      "amor_pair_force",
-      "influence_ttl_base",
-      "influence_ttl_explosion_base",
-      "low_population_threshold",
-      "low_population_death_scale",
-      "rarity_birth_boost",
-      "diversity_floor",
-      "love_death_protection",
-      "adaptive_performance_mode"
-    ].join(",");
-
     try {
       const picker = (window as unknown as { showSaveFilePicker?: Function }).showSaveFilePicker;
       if (!picker) {
-        setCsvStatus("File picker unsupported; logging in-memory fallback");
-        enqueueCsvLine(header);
+        setCsvStatus("File picker unsupported; summary logging in-memory fallback");
         return;
       }
       const handle = await picker({
@@ -625,12 +715,10 @@ function App() {
       csvFileHandleRef.current = handle as FileSystemFileHandle;
       csvWriteChainRef.current = Promise.resolve();
       setCsvStatus(`Saving to ${sessionIdRef.current}.csv`);
-      enqueueCsvLine(header);
     } catch {
-      setCsvStatus("CSV save cancelled; logging in-memory fallback");
-      enqueueCsvLine(header);
+      setCsvStatus("CSV save cancelled; summary logging in-memory fallback");
     }
-  }, [enqueueCsvLine]);
+  }, []);
 
   const startSession = useCallback(
     async (mode: SessionMode) => {
@@ -647,9 +735,9 @@ function App() {
       const runConfig = mode === "auto" ? randomConfig() : pendingConfig;
       resetUniverse(runConfig);
       nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-      logRunEvent("run_start", 0, 0, 0);
+      initRunSummary(mode, currentRunIndexRef.current, runConfig);
     },
-    [autoRunTarget, logRunEvent, openSessionCsv, pendingConfig, randomConfig, resetUniverse]
+    [autoRunTarget, initRunSummary, openSessionCsv, pendingConfig, randomConfig, resetUniverse]
   );
 
   useEffect(() => {
@@ -695,7 +783,7 @@ function App() {
         resetUniverse(currentConfigRef.current);
         currentRunIndexRef.current += 1;
         nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-        logRunEvent("run_start", 0, 0, 0);
+        initRunSummary(sessionModeRef.current ?? "individual", currentRunIndexRef.current, currentConfigRef.current);
       } else if (key === "h") {
         setShowHelp((value) => !value);
       }
@@ -705,7 +793,7 @@ function App() {
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [logRunEvent, resetUniverse]);
+  }, [initRunSummary, resetUniverse]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1461,7 +1549,7 @@ function App() {
         const runSeconds = simulationStepsRef.current / 60;
         const nonAmorCount = particles.reduce((total, particle) => total + (particle.type === "AMOR" ? 0 : 1), 0);
         while (simulationStepsRef.current >= nextCheckpointStepRef.current && nonAmorCount > 0) {
-          logRunEvent("checkpoint", runSeconds, particles.length, residuals.length);
+          updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, false);
           nextCheckpointStepRef.current += CHECKPOINT_INTERVAL_STEPS;
         }
         if (nonAmorCount === 0 && !extinctionRecordedRef.current) {
@@ -1474,7 +1562,7 @@ function App() {
           extinctionAvgRef.current = nextAvg;
           setExtinctionCount(nextCount);
           setExtinctionAvgSeconds(nextAvg);
-          logRunEvent("extinction", runSeconds, nonAmorCount, residuals.length);
+          updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, true);
           if (sessionMode === "auto" && currentRunIndexRef.current < autoRunTargetRef.current) {
             setAutoRunCompleted(currentRunIndexRef.current);
             setExtinctionNotice(`Extinction Event! All non-Amor particles vanished in run ${currentRunIndexRef.current}. Saved and restarting in 1 second...`);
@@ -1488,7 +1576,7 @@ function App() {
               const nextConfig = randomConfig();
               resetUniverse(nextConfig);
               nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-              logRunEvent("run_start", 0, 0, 0);
+              initRunSummary("auto", currentRunIndexRef.current, nextConfig);
               setExtinctionNotice(null);
               setAutoRestartCountdown(null);
               autoRestartTimeoutRef.current = null;
@@ -1503,6 +1591,9 @@ function App() {
             setAutoRestartCountdown(null);
             setPaused(true);
           }
+        }
+        if (nonAmorCount > 0) {
+          updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, false);
         }
         setFps(frameCounterRef.current);
         frameCounterRef.current = 0;
@@ -1552,10 +1643,10 @@ function App() {
     currentRunIndexRef.current += 1;
     resetUniverse(currentConfigRef.current);
     nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-    logRunEvent("run_start", 0, 0, 0);
+    initRunSummary(sessionModeRef.current ?? "individual", currentRunIndexRef.current, currentConfigRef.current);
     setExtinctionNotice(null);
     setAutoRestartCountdown(null);
-  }, [logRunEvent, resetUniverse]);
+  }, [initRunSummary, resetUniverse]);
 
   return (
     <main className="app">
@@ -1569,7 +1660,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.8</strong>
+            <strong>Universe Game v1.3.9</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
@@ -1666,7 +1757,7 @@ function App() {
               currentRunIndexRef.current += 1;
               resetUniverse(currentConfigRef.current);
               nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-              logRunEvent("run_start", 0, 0, 0);
+              initRunSummary(sessionModeRef.current ?? "individual", currentRunIndexRef.current, currentConfigRef.current);
             }}
           >
             Big Bang Reset

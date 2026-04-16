@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.9` - CSV logging switched to run-summary rows (single row per run with in-place updates) for both individual and auto sessions.
 - `v1.3.8` - Strict setup-mode input isolation to prevent runtime interaction while editing session parameters.
 - `v1.3.7` - Startup overlay stability hardening and visual universe boundary with black outside-space rendering.
 - `v1.3.6` - Durable per-row CSV writes, adaptive performance controls, non-extinguishable Amor semantics, and extinction event restart overlays.
@@ -19,6 +20,12 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.9`
+
+- Replaced event-style CSV logging with run-summary CSV rows that are updated in place over time.
+- Individual mode now keeps one evolving summary row for the current universe run.
+- Auto mode now keeps one evolving summary row per tested run.
 
 ### `v1.3.8`
 
