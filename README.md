@@ -5,9 +5,20 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
-- `v1.2.1` - Fixed static HUD overlay independent of camera zoom and added optional contemplative ambient music play/pause control.
+- `v1.2.1` - Wide zoom, time control, residual frequencies, static HUD, and ambient music polish release.
 - `v1.2.0` - Wide zoom-out universe view, contemplative time controls (0.1x-1000x), and Residual Frequencies with fading reactive trails.
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
+
+## Changelog
+
+### `v1.2.1`
+
+- Static HUD overlay stays fixed on screen regardless of camera zoom or pan.
+- Universe camera supports 10x wider zoom-out for a broader contemplative field.
+- Time Flow slider supports fine-to-extreme control from `0.1x` to `1000x`.
+- Residual Frequencies system adds fading reactive frequency trails and interactions.
+- Ambient music player with play/pause control for optional contemplative audio.
+- UI polish pass to improve readability, spacing, and panel consistency.
 
 ## Features
 
