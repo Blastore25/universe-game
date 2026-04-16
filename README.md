@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.2.1` - Fixed static HUD overlay independent of camera zoom and added optional contemplative ambient music play/pause control.
 - `v1.2.0` - Wide zoom-out universe view, contemplative time controls (0.1x-1000x), and Residual Frequencies with fading reactive trails.
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 

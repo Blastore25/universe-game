@@ -27,6 +27,13 @@ body {
   height: 100%;
 }
 
+.hud-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
 .simulation-canvas {
   display: block;
   width: 100%;
@@ -47,6 +54,7 @@ body {
   border-radius: 14px;
   font-size: 13px;
   line-height: 1.4;
+  pointer-events: auto;
 }
 
 .title-row {
@@ -93,6 +101,7 @@ body {
   flex-wrap: wrap;
   gap: 8px;
   max-width: min(520px, calc(100vw - 32px));
+  pointer-events: auto;
 }
 
 button {

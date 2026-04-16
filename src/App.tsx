@@ -117,6 +117,7 @@ function App() {
   const [fps, setFps] = useState(0);
   const [particleCount, setParticleCount] = useState(0);
   const [amorCount, setAmorCount] = useState(0);
+  const [isMusicPlaying, setIsMusicPlaying] = useState(false);
 
   const particlesRef = useRef<Particle[]>([]);
   const residualsRef = useRef<ResidualFrequency[]>([]);
@@ -138,6 +139,9 @@ function App() {
   const timeScaleRef = useRef(timeScale);
   const mountedRef = useRef(true);
   const lastFrameTimeRef = useRef(performance.now());
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const ambientGainRef = useRef<GainNode | null>(null);
+  const ambientNodesRef = useRef<OscillatorNode[]>([]);
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -168,9 +172,90 @@ function App() {
     setPaused(false);
   }, []);
 
+  const stopAmbientMusic = useCallback(() => {
+    if (audioContextRef.current) {
+      ambientGainRef.current?.gain.cancelScheduledValues(audioContextRef.current.currentTime);
+      ambientGainRef.current?.gain.setTargetAtTime(0.0001, audioContextRef.current.currentTime, 0.9);
+      void audioContextRef.current.suspend();
+    }
+    setIsMusicPlaying(false);
+  }, []);
+
+  const ensureAmbientMusic = useCallback(async () => {
+    if (audioContextRef.current) {
+      return audioContextRef.current;
+    }
+
+    const context = new window.AudioContext();
+    const master = context.createGain();
+    master.gain.value = 0.0001;
+    master.connect(context.destination);
+
+    const frequencies = [220, 293.66, 329.63];
+    const waves: OscillatorType[] = ["sine", "triangle", "sine"];
+    const oscillators: OscillatorNode[] = [];
+
+    for (let i = 0; i < frequencies.length; i += 1) {
+      const oscillator = context.createOscillator();
+      oscillator.type = waves[i];
+      oscillator.frequency.value = frequencies[i];
+      oscillator.detune.value = (Math.random() - 0.5) * 5;
+
+      const voiceGain = context.createGain();
+      voiceGain.gain.value = i === 1 ? 0.08 : 0.05;
+      oscillator.connect(voiceGain);
+      voiceGain.connect(master);
+      oscillator.start();
+      oscillators.push(oscillator);
+    }
+
+    const lfo = context.createOscillator();
+    const lfoGain = context.createGain();
+    lfo.type = "sine";
+    lfo.frequency.value = 0.08;
+    lfoGain.gain.value = 0.025;
+    lfo.connect(lfoGain);
+    lfoGain.connect(master.gain);
+    lfo.start();
+    oscillators.push(lfo);
+
+    audioContextRef.current = context;
+    ambientGainRef.current = master;
+    ambientNodesRef.current = oscillators;
+
+    return context;
+  }, []);
+
+  const toggleAmbientMusic = useCallback(async () => {
+    if (isMusicPlaying) {
+      stopAmbientMusic();
+      return;
+    }
+
+    const context = await ensureAmbientMusic();
+    await context.resume();
+    ambientGainRef.current?.gain.cancelScheduledValues(context.currentTime);
+    ambientGainRef.current?.gain.setTargetAtTime(0.06, context.currentTime, 2.2);
+    setIsMusicPlaying(true);
+  }, [ensureAmbientMusic, isMusicPlaying, stopAmbientMusic]);
+
   useEffect(() => {
     resetUniverse();
   }, [resetUniverse]);
+
+  useEffect(() => {
+    return () => {
+      stopAmbientMusic();
+      for (const oscillator of ambientNodesRef.current) {
+        oscillator.stop();
+      }
+      ambientNodesRef.current = [];
+      if (audioContextRef.current) {
+        void audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
+    };
+  }, [stopAmbientMusic]);
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
@@ -508,46 +593,52 @@ function App() {
     <main className="app">
       <canvas ref={canvasRef} className="simulation-canvas" />
 
-      <section className="panel">
-        <div className="title-row">
-          <span className="pulse-dot" />
-          <strong>Universe Game v1.2.0</strong>
-        </div>
-        <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
-        <p className="dim">State: {paused ? "Paused" : "Running"} | Time: {timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</p>
-        <div className="legend dim">
-          {archetypeLegend.map((entry) => (
-            <span key={entry.name}>
-              <span className="chip" style={{ background: entry.color }} />
-              {entry.name}
-            </span>
-          ))}
-        </div>
-        {showHelp ? (
-          <p className="dim">Drag: pan • Scroll: zoom • Space: pause • R: reset • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance</p>
-        ) : null}
-      </section>
+      <div className="hud-layer">
+        <section className="panel">
+          <div className="title-row">
+            <span className="pulse-dot" />
+            <strong>Universe Game v1.2.1</strong>
+          </div>
+          <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
+          <p className="dim">State: {paused ? "Paused" : "Running"} | Time: {timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</p>
+          <p className="dim">Ambient: {isMusicPlaying ? "Playing" : "Off"} (optional)</p>
+          <div className="legend dim">
+            {archetypeLegend.map((entry) => (
+              <span key={entry.name}>
+                <span className="chip" style={{ background: entry.color }} />
+                {entry.name}
+              </span>
+            ))}
+          </div>
+          {showHelp ? (
+            <p className="dim">Drag: pan • Scroll: zoom • Space: pause • R: reset • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance</p>
+          ) : null}
+        </section>
 
-      <div className="controls">
-        <button type="button" onClick={() => setPaused((value) => !value)}>
-          {paused ? "Resume" : "Pause"}
-        </button>
-        <label className="time-control" htmlFor="time-scale">
-          <span>Time Flow</span>
-          <input
-            id="time-scale"
-            type="range"
-            min={0}
-            max={1}
-            step={0.001}
-            value={sliderValue}
-            onChange={(event) => setTimeScaleFromSlider(Number(event.currentTarget.value))}
-          />
-          <strong>{timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</strong>
-        </label>
-        <button type="button" onClick={resetUniverse}>
-          Big Bang Reset
-        </button>
+        <div className="controls">
+          <button type="button" onClick={() => setPaused((value) => !value)}>
+            {paused ? "Resume" : "Pause"}
+          </button>
+          <button type="button" onClick={() => void toggleAmbientMusic()}>
+            {isMusicPlaying ? "Pause Ambient" : "Play Ambient"}
+          </button>
+          <label className="time-control" htmlFor="time-scale">
+            <span>Time Flow</span>
+            <input
+              id="time-scale"
+              type="range"
+              min={0}
+              max={1}
+              step={0.001}
+              value={sliderValue}
+              onChange={(event) => setTimeScaleFromSlider(Number(event.currentTarget.value))}
+            />
+            <strong>{timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</strong>
+          </label>
+          <button type="button" onClick={resetUniverse}>
+            Big Bang Reset
+          </button>
+        </div>
       </div>
     </main>
   );
