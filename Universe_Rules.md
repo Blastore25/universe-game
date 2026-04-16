@@ -1,6 +1,6 @@
 # Universe Game - Fundamental Rules (Current Implementation)
 
-**Version:** `v1.3.14`
+**Version:** `v1.3.15`
 
 This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 
@@ -106,22 +106,27 @@ HUD includes:
 - sim timer (scales with Time control) and extinction / static-universe timestamps when triggered
 - phase state and residual count
 - workload indicators (substeps/frame and interaction checks/s)
-- session mode and CSV logging status
+- session export status (CSV + optional Markdown log)
 
 During setup, an optional **Setup Debug Console** (off by default) logs input/change events and captures `window.error` / `unhandledrejection` so startup issues can be diagnosed from the UI. Log lines are batched to the next animation frame so typing stays responsive.
 
-## CSV Experiment Logging
+## Session export (CSV + Markdown)
 
-At session start, the app prompts for a CSV save target (when browser supports File System Access API).
+When the browser supports the File System Access API, session start opens **two save dialogs in order**: first the **`.csv`** (machine-friendly), then a **`.md`** human-readable session log. You can cancel the second dialog and keep CSV-only.
 
-Logging model:
+**Same update cadence:** whenever run summaries are flushed to disk, **both** files are rewritten in full from the current in-memory summaries (small files, keeps implementation simple and avoids RAM growth).
+
+### CSV
 
 - **Run-summary rows (not event rows):** one evolving row per run.
-- **Individual mode:** one row for the current universe run, updated at checkpoints/extinction/static.
+- **Individual mode:** one row for the current universe run, updated at checkpoints / extinction / static universe.
 - **Auto mode:** one row per tested universe run, each updated through that run lifecycle.
-- CSV columns include `status` (`ongoing` / `extinct` / `static`), `extinction_seconds`, and `static_seconds` (whichever applies).
+- Columns include `status` (`ongoing` / `extinct` / `static`), `extinction_seconds`, and `static_seconds` (whichever applies), plus tunable parameters and telemetry fields.
 
-Each row stores run metadata, tunable parameters, and key runtime metrics for later analysis without unbounded event-row growth.
+### Markdown (`.md`)
+
+- One document per session with a **## Run N** section per run.
+- Tables spell out metrics, brief history, and the parameter block in plain language so you can skim results without parsing CSV.
 
 ---
 

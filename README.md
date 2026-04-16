@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.15` - Optional **Markdown session log** (`.md`) alongside CSV: same flush cadence, human-readable run sections and parameter tables; dual save prompts at session start.
 - `v1.3.14` - **Static Universe** rename and rule: 2000 sim seconds with **no** change in total or non-Amor counts; docs distinguish ecological **stable** (oscillating) universe vs **static** detection; sim timer explicitly tied to Time control.
 - `v1.3.13` - Stable-universe detection: population equilibrium pauses the sim with restart (individual) or auto-advance (auto), CSV `stable` status and `stable_seconds` column.
 - `v1.3.12` - Fix setup crash from stale `event.currentTarget` in state updaters; debug log off by default and rAF-batched for smooth typing.
@@ -25,6 +26,12 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.15`
+
+- Added **session Markdown export** (readable `.md`) mirroring run-summary data on every CSV flush (full rewrite, same memory model as CSV).
+- Session start: save **CSV** then optional **Markdown** (second file picker can be cancelled for CSV-only).
+- HUD label **Session export**; `Universe_Rules.md` documents CSV + Markdown flow.
 
 ### `v1.3.14`
 

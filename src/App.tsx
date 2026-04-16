@@ -136,6 +136,78 @@ interface RunSummary {
   config: SessionConfig;
 }
 
+/** Human-readable session document; mirrors `runSummariesRef` data written to CSV on each flush. */
+function buildSessionMarkdownDoc(runs: RunSummary[], sessionIdFallback: string): string {
+  const lines: string[] = [];
+  const sid = runs.length > 0 ? runs[0].sessionId : sessionIdFallback;
+
+  lines.push("# Universe Game — session log");
+  lines.push("");
+  lines.push("This file is the **same run-summary data** as the companion `.csv`, rewritten in full on each save so it stays easy to read in any editor.");
+  lines.push("");
+  lines.push("| | |");
+  lines.push("|---|---|");
+  lines.push(`| **Session ID** | \`${sid}\` |`);
+  lines.push(`| **Runs in this file** | ${runs.length} |`);
+  lines.push(`| **Last updated (wall clock)** | ${new Date().toISOString()} |`);
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+
+  if (runs.length === 0) {
+    lines.push("*No runs recorded yet.*");
+    lines.push("");
+    return lines.join("\n");
+  }
+
+  for (const run of runs) {
+    lines.push(`## Run ${run.runIndex} — mode: **${run.mode}**`);
+    lines.push("");
+    lines.push("### Run metrics");
+    lines.push("");
+    lines.push("| Field | Value |");
+    lines.push("|:---|:---|");
+    lines.push(`| **Status** | \`${run.status}\` |`);
+    lines.push(`| Sim time (s) | ${run.simSeconds.toFixed(3)} |`);
+    lines.push(`| Extinction at (sim s) | ${run.extinctionSeconds === null ? "—" : run.extinctionSeconds.toFixed(3)} |`);
+    lines.push(`| Static universe at (sim s) | ${run.staticSimSeconds === null ? "—" : run.staticSimSeconds.toFixed(3)} |`);
+    lines.push(`| Particles (initial → peak) | ${run.particlesInitial} → ${run.particlesPeak} |`);
+    lines.push(`| Non-Amor min / max / current | ${run.nonAmorMin} / ${run.nonAmorMax} / ${run.nonAmorCurrent} |`);
+    lines.push(`| Residual peak count | ${run.residualPeak} |`);
+    lines.push(`| Checkpoints (approx.) | ${run.checkpointCount} |`);
+    lines.push("");
+    lines.push("### Brief history");
+    lines.push("");
+    lines.push(`> ${run.historyBrief}`);
+    lines.push("");
+    lines.push("### Parameters for this run");
+    lines.push("");
+    lines.push("| Parameter | Value |");
+    lines.push("|:---|:---|");
+    const c = run.config;
+    lines.push(
+      `| Starting counts (Pulse / Bloom / Echo / Void / Amor) | ${c.counts.PULSE} / ${c.counts.BLOOM} / ${c.counts.ECHO} / ${c.counts.VOID} / ${c.counts.AMOR} |`
+    );
+    lines.push(`| Max particles | ${c.maxParticles} |`);
+    lines.push(`| Attraction scale | ${c.attractionScale} |`);
+    lines.push(`| Same-type repulsion | ${c.sameTypeRepulsion} |`);
+    lines.push(`| Amor pair force | ${c.amorPairForce} |`);
+    lines.push(`| Influence TTL base | ${c.influenceTtlBase} |`);
+    lines.push(`| Influence TTL explosion base | ${c.influenceTtlExplosionBase} |`);
+    lines.push(`| Low-population threshold | ${c.lowPopulationThreshold} |`);
+    lines.push(`| Low-population death scale | ${c.lowPopulationDeathScale} |`);
+    lines.push(`| Rarity birth boost | ${c.rarityBirthBoost} |`);
+    lines.push(`| Diversity floor | ${c.diversityFloor} |`);
+    lines.push(`| Love death protection | ${c.loveDeathProtection} |`);
+    lines.push(`| Adaptive performance mode | ${c.adaptivePerformanceMode ? "on" : "off"} |`);
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
 interface SetupDraft {
   counts: Record<ArchetypeKey, string>;
   maxParticles: string;
@@ -403,6 +475,8 @@ function App() {
   const csvFileHandleRef = useRef<FileSystemFileHandle | null>(null);
   const csvWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const csvFallbackRowsRef = useRef<string[]>([]);
+  const markdownFileHandleRef = useRef<FileSystemFileHandle | null>(null);
+  const markdownWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const runSummariesRef = useRef<Map<number, RunSummary>>(new Map());
   const autoRestartTimeoutRef = useRef<number | null>(null);
   const extinctionRecordedRef = useRef(false);
@@ -523,6 +597,20 @@ function App() {
     return str;
   }, []);
 
+  const flushMarkdownSummaries = useCallback(() => {
+    const runs = [...runSummariesRef.current.values()].sort((a, b) => a.runIndex - b.runIndex);
+    const content = buildSessionMarkdownDoc(runs, sessionIdRef.current);
+    const handle = markdownFileHandleRef.current;
+    if (!handle) {
+      return;
+    }
+    markdownWriteChainRef.current = markdownWriteChainRef.current.then(async () => {
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+    });
+  }, []);
+
   const toSummaryRow = useCallback(
     (summary: RunSummary) =>
       [
@@ -615,7 +703,9 @@ function App() {
       await writable.write(content);
       await writable.close();
     });
-  }, [toSummaryRow]);
+
+    flushMarkdownSummaries();
+  }, [flushMarkdownSummaries, toSummaryRow]);
 
   const upsertRunSummary = useCallback(
     (patch: Partial<RunSummary> & { runIndex: number }) => {
@@ -822,6 +912,8 @@ function App() {
     csvFallbackRowsRef.current = [];
     runSummariesRef.current.clear();
     csvFileHandleRef.current = null;
+    markdownFileHandleRef.current = null;
+    markdownWriteChainRef.current = Promise.resolve();
     try {
       const picker = (window as unknown as { showSaveFilePicker?: Function }).showSaveFilePicker;
       if (!picker) {
@@ -834,7 +926,20 @@ function App() {
       });
       csvFileHandleRef.current = handle as FileSystemFileHandle;
       csvWriteChainRef.current = Promise.resolve();
-      setCsvStatus(`Saving to ${sessionIdRef.current}.csv`);
+      let mdNote = "";
+      try {
+        const mdHandle = await picker({
+          suggestedName: `${sessionIdRef.current}.md`,
+          types: [{ description: "Markdown", accept: { "text/markdown": [".md"], "text/plain": [".md"] } }]
+        });
+        markdownFileHandleRef.current = mdHandle as FileSystemFileHandle;
+        markdownWriteChainRef.current = Promise.resolve();
+        mdNote = ` + ${sessionIdRef.current}.md`;
+      } catch {
+        markdownFileHandleRef.current = null;
+        mdNote = " (Markdown save skipped)";
+      }
+      setCsvStatus(`Saving session to ${sessionIdRef.current}.csv${mdNote}`);
     } catch {
       setCsvStatus("CSV save cancelled; summary logging in-memory fallback");
     }
@@ -946,6 +1051,7 @@ function App() {
         audioContextRef.current = null;
       }
       csvFileHandleRef.current = null;
+      markdownFileHandleRef.current = null;
       if (autoRestartTimeoutRef.current !== null) {
         window.clearTimeout(autoRestartTimeoutRef.current);
         autoRestartTimeoutRef.current = null;
@@ -1958,7 +2064,7 @@ function App() {
             }}
           >
             <h2>Choose Session Mode</h2>
-            <p>Configure parameters before the first Big Bang. CSV save prompt appears at start.</p>
+            <p>Configure parameters before the first Big Bang. Session start opens save dialogs for CSV and a readable Markdown log (Markdown optional).</p>
             <label className="startup-toggle">
               <span>Setup debug log</span>
               <input
@@ -2296,12 +2402,12 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.14</strong>
+            <strong>Universe Game v1.3.15</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
           <p className="dim">Adaptive Performance: {currentConfigRef.current.adaptivePerformanceMode ? "On" : "Off"}</p>
-          <p className="dim">CSV: {csvStatus}</p>
+          <p className="dim">Session export: {csvStatus}</p>
           {sessionMode === "auto" ? <p className="dim">Auto progress: {autoRunCompleted}/{autoRunTargetRef.current}</p> : null}
           <p className="dim">State: {paused ? "Paused" : "Running"} | Time: {timeScale.toFixed(timeScale >= 100 ? 0 : timeScale >= 10 ? 1 : 2)}x</p>
           <p className="dim">World: {WORLD_SIZE} x {WORLD_SIZE} (wrap)</p>
