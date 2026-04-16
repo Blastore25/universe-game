@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.2.0` - Wide zoom-out universe view, contemplative time controls (0.1x-1000x), and Residual Frequencies with fading reactive trails.
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Features
@@ -12,6 +13,9 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - Real-time 2D particle simulation with Big Bang reset
 - Five archetypes: `Pulse`, `Bloom`, `Echo`, `Void`, `Amor`
 - `Amor` behavior preserved as a unifying force with attraction-driven interactions
+- Residual Frequencies trail system with subtle visual echoes carrying Love, Chaos, Order, and Energy
+- Frequency-driven reactions: attraction, mutation, inspiration, and avoidance
+- Time Flow controls: pause/resume + slider from `0.1x` to `1000x`
 - Mouse camera controls: drag to pan, wheel to zoom
 - Keyboard controls: `Space` (pause), `R` (reset), `H` (toggle help)
 - Live stats panel (total particles, Amor count, FPS)
@@ -96,6 +100,7 @@ vercel --prod
 - `Drag` (mouse): Move camera
 - `Scroll` wheel: Zoom in/out
 - `Space`: Pause/resume simulation
+- `Time Flow` slider: adjust simulation speed from `0.1x` to `1000x`
 - `R`: Trigger a fresh Big Bang reset
 - `H`: Toggle help text
 

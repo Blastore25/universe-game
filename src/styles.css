@@ -89,7 +89,10 @@ body {
   right: 16px;
   top: 16px;
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  max-width: min(520px, calc(100vw - 32px));
 }
 
 button {
@@ -109,6 +112,38 @@ button:hover {
 button:focus-visible {
   outline: 2px solid #a78bfa;
   outline-offset: 2px;
+}
+
+.time-control {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 260px) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(183, 175, 255, 0.35);
+  background: rgba(12, 12, 36, 0.78);
+  color: #f5f4ff;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  min-height: 34px;
+}
+
+.time-control span {
+  color: #cdc9f8;
+  letter-spacing: 0.02em;
+}
+
+.time-control strong {
+  color: #efe9ff;
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.time-control input[type="range"] {
+  width: 100%;
+  accent-color: #a78bfa;
+  cursor: pointer;
 }
 
 @keyframes pulse {
