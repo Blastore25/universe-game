@@ -130,6 +130,23 @@ interface RunSummary {
   config: SessionConfig;
 }
 
+interface SetupDraft {
+  counts: Record<ArchetypeKey, string>;
+  maxParticles: string;
+  attractionScale: string;
+  sameTypeRepulsion: string;
+  amorPairForce: string;
+  influenceTtlBase: string;
+  influenceTtlExplosionBase: string;
+  lowPopulationThreshold: string;
+  lowPopulationDeathScale: string;
+  rarityBirthBoost: string;
+  diversityFloor: string;
+  loveDeathProtection: string;
+  adaptivePerformanceMode: boolean;
+  autoRunTarget: string;
+}
+
 const DEFAULT_SESSION_CONFIG: SessionConfig = {
   counts: { ...BIG_BANG_COUNTS },
   maxParticles: 1200,
@@ -145,6 +162,31 @@ const DEFAULT_SESSION_CONFIG: SessionConfig = {
   loveDeathProtection: 0.55,
   adaptivePerformanceMode: false
 };
+
+function createSetupDraft(config: SessionConfig, autoRunTarget: number): SetupDraft {
+  return {
+    counts: {
+      PULSE: String(config.counts.PULSE),
+      BLOOM: String(config.counts.BLOOM),
+      ECHO: String(config.counts.ECHO),
+      VOID: String(config.counts.VOID),
+      AMOR: String(config.counts.AMOR)
+    },
+    maxParticles: String(config.maxParticles),
+    attractionScale: String(config.attractionScale),
+    sameTypeRepulsion: String(config.sameTypeRepulsion),
+    amorPairForce: String(config.amorPairForce),
+    influenceTtlBase: String(config.influenceTtlBase),
+    influenceTtlExplosionBase: String(config.influenceTtlExplosionBase),
+    lowPopulationThreshold: String(config.lowPopulationThreshold),
+    lowPopulationDeathScale: String(config.lowPopulationDeathScale),
+    rarityBirthBoost: String(config.rarityBirthBoost),
+    diversityFloor: String(config.diversityFloor),
+    loveDeathProtection: String(config.loveDeathProtection),
+    adaptivePerformanceMode: config.adaptivePerformanceMode,
+    autoRunTarget: String(autoRunTarget)
+  };
+}
 
 const ATTRACTION_MATRIX: Record<ArchetypeKey, Partial<Record<ArchetypeKey, number>>> = {
   PULSE: { BLOOM: 0.09, AMOR: 0.12, ECHO: -0.08, VOID: -0.06 },
@@ -272,8 +314,7 @@ function App() {
   const [paused, setPaused] = useState(false);
   const [showHelp, setShowHelp] = useState(true);
   const [startupMode, setStartupMode] = useState<SessionMode>("individual");
-  const [pendingConfig, setPendingConfig] = useState<SessionConfig>(DEFAULT_SESSION_CONFIG);
-  const [autoRunTarget, setAutoRunTarget] = useState(10);
+  const [setupDraft, setSetupDraft] = useState<SetupDraft>(() => createSetupDraft(DEFAULT_SESSION_CONFIG, 10));
   const [sessionMode, setSessionMode] = useState<SessionMode | null>(null);
   const [setupOpen, setSetupOpen] = useState(true);
   const [timeScale, setTimeScale] = useState(1);
@@ -720,8 +761,61 @@ function App() {
     }
   }, []);
 
+  const parseSetupSession = useCallback(() => {
+    const parseIntWithClamp = (value: string, fallback: number, min: number, max: number) => {
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isFinite(parsed)) {
+        return fallback;
+      }
+      return Math.min(max, Math.max(min, parsed));
+    };
+
+    const parseFloatWithClamp = (value: string, fallback: number, min: number, max: number) => {
+      const parsed = Number.parseFloat(value);
+      if (!Number.isFinite(parsed)) {
+        return fallback;
+      }
+      return Math.min(max, Math.max(min, parsed));
+    };
+
+    const config: SessionConfig = {
+      counts: {
+        PULSE: parseIntWithClamp(setupDraft.counts.PULSE, DEFAULT_SESSION_CONFIG.counts.PULSE, 0, 10000),
+        BLOOM: parseIntWithClamp(setupDraft.counts.BLOOM, DEFAULT_SESSION_CONFIG.counts.BLOOM, 0, 10000),
+        ECHO: parseIntWithClamp(setupDraft.counts.ECHO, DEFAULT_SESSION_CONFIG.counts.ECHO, 0, 10000),
+        VOID: parseIntWithClamp(setupDraft.counts.VOID, DEFAULT_SESSION_CONFIG.counts.VOID, 0, 10000),
+        AMOR: parseIntWithClamp(setupDraft.counts.AMOR, DEFAULT_SESSION_CONFIG.counts.AMOR, 0, 10000)
+      },
+      maxParticles: parseIntWithClamp(setupDraft.maxParticles, DEFAULT_SESSION_CONFIG.maxParticles, 100, 10000),
+      attractionScale: parseFloatWithClamp(setupDraft.attractionScale, DEFAULT_SESSION_CONFIG.attractionScale, 0, 100),
+      sameTypeRepulsion: parseFloatWithClamp(setupDraft.sameTypeRepulsion, DEFAULT_SESSION_CONFIG.sameTypeRepulsion, 0, 1),
+      amorPairForce: parseFloatWithClamp(setupDraft.amorPairForce, DEFAULT_SESSION_CONFIG.amorPairForce, 0, 100),
+      influenceTtlBase: parseIntWithClamp(setupDraft.influenceTtlBase, DEFAULT_SESSION_CONFIG.influenceTtlBase, 1, 20000),
+      influenceTtlExplosionBase: parseIntWithClamp(
+        setupDraft.influenceTtlExplosionBase,
+        DEFAULT_SESSION_CONFIG.influenceTtlExplosionBase,
+        1,
+        20000
+      ),
+      lowPopulationThreshold: parseIntWithClamp(setupDraft.lowPopulationThreshold, DEFAULT_SESSION_CONFIG.lowPopulationThreshold, 1, 20000),
+      lowPopulationDeathScale: parseFloatWithClamp(
+        setupDraft.lowPopulationDeathScale,
+        DEFAULT_SESSION_CONFIG.lowPopulationDeathScale,
+        0.05,
+        1
+      ),
+      rarityBirthBoost: parseFloatWithClamp(setupDraft.rarityBirthBoost, DEFAULT_SESSION_CONFIG.rarityBirthBoost, 0, 20),
+      diversityFloor: parseIntWithClamp(setupDraft.diversityFloor, DEFAULT_SESSION_CONFIG.diversityFloor, 1, 20000),
+      loveDeathProtection: parseFloatWithClamp(setupDraft.loveDeathProtection, DEFAULT_SESSION_CONFIG.loveDeathProtection, 0, 0.95),
+      adaptivePerformanceMode: setupDraft.adaptivePerformanceMode
+    };
+
+    const parsedAutoRuns = parseIntWithClamp(setupDraft.autoRunTarget, 10, 1, 10000);
+    return { config, autoRuns: parsedAutoRuns };
+  }, [setupDraft]);
+
   const startSession = useCallback(
-    async (mode: SessionMode) => {
+    async (mode: SessionMode, baseConfig: SessionConfig, autoRuns: number) => {
       await openSessionCsv(mode);
       setSetupOpen(false);
       setSessionMode(mode);
@@ -730,14 +824,14 @@ function App() {
       extinctionAvgRef.current = null;
       setExtinctionCount(0);
       setExtinctionAvgSeconds(null);
-      autoRunTargetRef.current = mode === "auto" ? Math.max(1, autoRunTarget) : 1;
+      autoRunTargetRef.current = mode === "auto" ? Math.max(1, autoRuns) : 1;
       currentRunIndexRef.current = 1;
-      const runConfig = mode === "auto" ? randomConfig() : pendingConfig;
+      const runConfig = mode === "auto" ? randomConfig() : baseConfig;
       resetUniverse(runConfig);
       nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
       initRunSummary(mode, currentRunIndexRef.current, runConfig);
     },
-    [autoRunTarget, initRunSummary, openSessionCsv, pendingConfig, randomConfig, resetUniverse]
+    [initRunSummary, openSessionCsv, randomConfig, resetUniverse]
   );
 
   useEffect(() => {
@@ -1685,11 +1779,11 @@ function App() {
                 <input
                   type="number"
                   min={0}
-                  value={pendingConfig.counts.PULSE}
+                  value={setupDraft.counts.PULSE}
                   onChange={(event) =>
-                    setPendingConfig((prev) => ({
+                    setSetupDraft((prev) => ({
                       ...prev,
-                      counts: { ...prev.counts, PULSE: Math.max(0, Math.floor(Number(event.currentTarget.value) || 0)) }
+                      counts: { ...prev.counts, PULSE: event.currentTarget.value }
                     }))
                   }
                 />
@@ -1699,11 +1793,11 @@ function App() {
                 <input
                   type="number"
                   min={0}
-                  value={pendingConfig.counts.BLOOM}
+                  value={setupDraft.counts.BLOOM}
                   onChange={(event) =>
-                    setPendingConfig((prev) => ({
+                    setSetupDraft((prev) => ({
                       ...prev,
-                      counts: { ...prev.counts, BLOOM: Math.max(0, Math.floor(Number(event.currentTarget.value) || 0)) }
+                      counts: { ...prev.counts, BLOOM: event.currentTarget.value }
                     }))
                   }
                 />
@@ -1713,11 +1807,11 @@ function App() {
                 <input
                   type="number"
                   min={0}
-                  value={pendingConfig.counts.ECHO}
+                  value={setupDraft.counts.ECHO}
                   onChange={(event) =>
-                    setPendingConfig((prev) => ({
+                    setSetupDraft((prev) => ({
                       ...prev,
-                      counts: { ...prev.counts, ECHO: Math.max(0, Math.floor(Number(event.currentTarget.value) || 0)) }
+                      counts: { ...prev.counts, ECHO: event.currentTarget.value }
                     }))
                   }
                 />
@@ -1727,11 +1821,11 @@ function App() {
                 <input
                   type="number"
                   min={0}
-                  value={pendingConfig.counts.VOID}
+                  value={setupDraft.counts.VOID}
                   onChange={(event) =>
-                    setPendingConfig((prev) => ({
+                    setSetupDraft((prev) => ({
                       ...prev,
-                      counts: { ...prev.counts, VOID: Math.max(0, Math.floor(Number(event.currentTarget.value) || 0)) }
+                      counts: { ...prev.counts, VOID: event.currentTarget.value }
                     }))
                   }
                 />
@@ -1741,11 +1835,11 @@ function App() {
                 <input
                   type="number"
                   min={0}
-                  value={pendingConfig.counts.AMOR}
+                  value={setupDraft.counts.AMOR}
                   onChange={(event) =>
-                    setPendingConfig((prev) => ({
+                    setSetupDraft((prev) => ({
                       ...prev,
-                      counts: { ...prev.counts, AMOR: Math.max(0, Math.floor(Number(event.currentTarget.value) || 0)) }
+                      counts: { ...prev.counts, AMOR: event.currentTarget.value }
                     }))
                   }
                 />
@@ -1756,11 +1850,11 @@ function App() {
                   type="number"
                   min={100}
                   max={10000}
-                  value={pendingConfig.maxParticles}
+                  value={setupDraft.maxParticles}
                   onChange={(event) =>
-                    setPendingConfig((prev) => ({
+                    setSetupDraft((prev) => ({
                       ...prev,
-                      maxParticles: Math.min(10000, Math.max(100, Math.floor(Number(event.currentTarget.value) || 100)))
+                      maxParticles: event.currentTarget.value
                     }))
                   }
                 />
@@ -1770,8 +1864,8 @@ function App() {
                 <input
                   type="number"
                   step="0.01"
-                  value={pendingConfig.attractionScale}
-                  onChange={(event) => setPendingConfig((prev) => ({ ...prev, attractionScale: Math.max(0, Number(event.currentTarget.value) || 0) }))}
+                  value={setupDraft.attractionScale}
+                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, attractionScale: event.currentTarget.value }))}
                 />
               </label>
               <label>
@@ -1779,10 +1873,8 @@ function App() {
                 <input
                   type="number"
                   step="0.001"
-                  value={pendingConfig.sameTypeRepulsion}
-                  onChange={(event) =>
-                    setPendingConfig((prev) => ({ ...prev, sameTypeRepulsion: Math.max(0, Number(event.currentTarget.value) || 0) }))
-                  }
+                  value={setupDraft.sameTypeRepulsion}
+                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, sameTypeRepulsion: event.currentTarget.value }))}
                 />
               </label>
               <label>
@@ -1790,8 +1882,8 @@ function App() {
                 <input
                   type="number"
                   step="0.01"
-                  value={pendingConfig.amorPairForce}
-                  onChange={(event) => setPendingConfig((prev) => ({ ...prev, amorPairForce: Math.max(0, Number(event.currentTarget.value) || 0) }))}
+                  value={setupDraft.amorPairForce}
+                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, amorPairForce: event.currentTarget.value }))}
                 />
               </label>
               <label>
@@ -1799,10 +1891,8 @@ function App() {
                 <input
                   type="number"
                   min={1}
-                  value={pendingConfig.influenceTtlBase}
-                  onChange={(event) =>
-                    setPendingConfig((prev) => ({ ...prev, influenceTtlBase: Math.max(1, Math.floor(Number(event.currentTarget.value) || 1)) }))
-                  }
+                  value={setupDraft.influenceTtlBase}
+                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, influenceTtlBase: event.currentTarget.value }))}
                 />
               </label>
               <label>
@@ -1810,13 +1900,8 @@ function App() {
                 <input
                   type="number"
                   min={1}
-                  value={pendingConfig.influenceTtlExplosionBase}
-                  onChange={(event) =>
-                    setPendingConfig((prev) => ({
-                      ...prev,
-                      influenceTtlExplosionBase: Math.max(1, Math.floor(Number(event.currentTarget.value) || 1))
-                    }))
-                  }
+                  value={setupDraft.influenceTtlExplosionBase}
+                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, influenceTtlExplosionBase: event.currentTarget.value }))}
                 />
               </label>
               <label>
@@ -1824,13 +1909,8 @@ function App() {
                 <input
                   type="number"
                   min={1}
-                  value={pendingConfig.lowPopulationThreshold}
-                  onChange={(event) =>
-                    setPendingConfig((prev) => ({
-                      ...prev,
-                      lowPopulationThreshold: Math.max(1, Math.floor(Number(event.currentTarget.value) || 1))
-                    }))
-                  }
+                  value={setupDraft.lowPopulationThreshold}
+                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, lowPopulationThreshold: event.currentTarget.value }))}
                 />
               </label>
               <label>
@@ -1840,13 +1920,8 @@ function App() {
                   step="0.01"
                   min={0.05}
                   max={1}
-                  value={pendingConfig.lowPopulationDeathScale}
-                  onChange={(event) =>
-                    setPendingConfig((prev) => ({
-                      ...prev,
-                      lowPopulationDeathScale: Math.max(0.05, Math.min(1, Number(event.currentTarget.value) || 0.05))
-                    }))
-                  }
+                  value={setupDraft.lowPopulationDeathScale}
+                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, lowPopulationDeathScale: event.currentTarget.value }))}
                 />
               </label>
               <label>
@@ -1855,13 +1930,8 @@ function App() {
                   type="number"
                   step="0.05"
                   min={0}
-                  value={pendingConfig.rarityBirthBoost}
-                  onChange={(event) =>
-                    setPendingConfig((prev) => ({
-                      ...prev,
-                      rarityBirthBoost: Math.max(0, Number(event.currentTarget.value) || 0)
-                    }))
-                  }
+                  value={setupDraft.rarityBirthBoost}
+                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, rarityBirthBoost: event.currentTarget.value }))}
                 />
               </label>
               <label>
@@ -1869,13 +1939,8 @@ function App() {
                 <input
                   type="number"
                   min={1}
-                  value={pendingConfig.diversityFloor}
-                  onChange={(event) =>
-                    setPendingConfig((prev) => ({
-                      ...prev,
-                      diversityFloor: Math.max(1, Math.floor(Number(event.currentTarget.value) || 1))
-                    }))
-                  }
+                  value={setupDraft.diversityFloor}
+                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, diversityFloor: event.currentTarget.value }))}
                 />
               </label>
               <label>
@@ -1885,22 +1950,17 @@ function App() {
                   step="0.01"
                   min={0}
                   max={0.95}
-                  value={pendingConfig.loveDeathProtection}
-                  onChange={(event) =>
-                    setPendingConfig((prev) => ({
-                      ...prev,
-                      loveDeathProtection: Math.max(0, Math.min(0.95, Number(event.currentTarget.value) || 0))
-                    }))
-                  }
+                  value={setupDraft.loveDeathProtection}
+                  onChange={(event) => setSetupDraft((prev) => ({ ...prev, loveDeathProtection: event.currentTarget.value }))}
                 />
               </label>
               <label className="startup-toggle">
                 <span>Adaptive performance mode</span>
                 <input
                   type="checkbox"
-                  checked={pendingConfig.adaptivePerformanceMode}
+                  checked={setupDraft.adaptivePerformanceMode}
                   onChange={(event) =>
-                    setPendingConfig((prev) => ({
+                    setSetupDraft((prev) => ({
                       ...prev,
                       adaptivePerformanceMode: event.currentTarget.checked
                     }))
@@ -1913,8 +1973,8 @@ function App() {
                   <input
                     type="number"
                     min={1}
-                    value={autoRunTarget}
-                    onChange={(event) => setAutoRunTarget(Math.max(1, Math.floor(Number(event.currentTarget.value) || 1)))}
+                    value={setupDraft.autoRunTarget}
+                    onChange={(event) => setSetupDraft((prev) => ({ ...prev, autoRunTarget: event.currentTarget.value }))}
                   />
                 </label>
               ) : null}
@@ -1924,7 +1984,8 @@ function App() {
                 type="button"
                 onClick={async () => {
                   wakeHud();
-                  await startSession(startupMode);
+                  const parsed = parseSetupSession();
+                  await startSession(startupMode, parsed.config, parsed.autoRuns);
                 }}
               >
                 Start {startupMode === "individual" ? "Individual Session" : "Auto Mode"}
