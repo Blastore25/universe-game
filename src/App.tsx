@@ -108,6 +108,11 @@ const STATIC_UNIVERSE_UNCHANGED_SIM_SECONDS = 2000;
 /** Rolling telemetry windows (~5 sim seconds each at 60 steps/sim s); ring buffer capped for MD export. */
 const TELEMETRY_WINDOW_STEPS = 300;
 const TELEMETRY_MAX_COMPLETED_WINDOWS = 48;
+/** Auto mode time ladder and long-horizon stable cutoff. */
+const AUTO_RUN_SPEED_5_AT = 500;
+const AUTO_RUN_SPEED_20_AT = 2000;
+const AUTO_RUN_SPEED_25_AT = 6000;
+const AUTO_RUN_STABLE_AT = 15000;
 /** If a non-Void particle ever reached this peak love and dies at love ≤ 1, a Void may spawn at its site. */
 const PEAK_LOVE_VOID_EXTINGUISH_THRESHOLD = 72;
 /** Second Bloom from same birth event (lowered for balance). */
@@ -227,10 +232,14 @@ interface RunSummary {
   runIndex: number;
   /** Auto mode: stable ID into the pre-generated schedule table (1-based). */
   parameterSetId: number | null;
-  status: "ongoing" | "extinct" | "static";
+  status: "ongoing" | "extinct" | "static" | "stable";
   simSeconds: number;
   extinctionSeconds: number | null;
   staticSimSeconds: number | null;
+  /** Auto mode: run reached long-horizon stability cutoff without extinction/static. */
+  stableSimSeconds: number | null;
+  /** Auto mode: monotonic ID assigned when a run ends as "Universe Stable!". */
+  stableUniverseId: number | null;
   particlesInitial: number;
   particlesPeak: number;
   nonAmorMin: number;
@@ -332,6 +341,10 @@ function buildSessionMarkdownDoc(
     lines.push(`| Sim time (s) | ${run.simSeconds.toFixed(3)} |`);
     lines.push(`| Extinction at (sim s) | ${run.extinctionSeconds === null ? "—" : run.extinctionSeconds.toFixed(3)} |`);
     lines.push(`| Static universe at (sim s) | ${run.staticSimSeconds === null ? "—" : run.staticSimSeconds.toFixed(3)} |`);
+    lines.push(`| Universe stable at (sim s) | ${run.stableSimSeconds === null ? "—" : run.stableSimSeconds.toFixed(3)} |`);
+    if (run.stableUniverseId != null) {
+      lines.push(`| **Universe Stable ID** | \`US-${run.stableUniverseId}\` |`);
+    }
     lines.push(`| Particles (initial → peak) | ${run.particlesInitial} → ${run.particlesPeak} |`);
     lines.push(`| Non-Amor min / max / current | ${run.nonAmorMin} / ${run.nonAmorMax} / ${run.nonAmorCurrent} |`);
     lines.push(`| Residual peak count | ${run.residualPeak} |`);
@@ -944,6 +957,10 @@ function App() {
   const autoRunUniqueSetsRef = useRef<AutoScheduleUniqueRow[]>([]);
   const autoRunScheduleMinRepeatRef = useRef(3);
   const autoRunScheduleMaxRepeatRef = useRef(5);
+  /** 0=1x, 1=5x, 2=20x, 3=25x for current auto run. */
+  const autoSpeedStageRef = useRef(0);
+  /** Monotonic "Universe Stable!" event counter for run summaries. */
+  const stableUniverseIdRef = useRef(0);
   const runSummariesRef = useRef<Map<number, RunSummary>>(new Map());
   const autoRestartTimeoutRef = useRef<number | null>(null);
   const extinctionRecordedRef = useRef(false);
@@ -1130,6 +1147,8 @@ function App() {
       simSeconds: 0,
       extinctionSeconds: null,
       staticSimSeconds: null,
+      stableSimSeconds: null,
+      stableUniverseId: null,
       particlesInitial: initial,
       particlesPeak: initial,
       nonAmorMin: nonAmorInitial,
@@ -1149,7 +1168,7 @@ function App() {
       particlesNow: number,
       nonAmorNow: number,
       residualsNow: number,
-      endKind: "none" | "extinct" | "static"
+      endKind: "none" | "extinct" | "static" | "stable"
     ) => {
       const run = runSummariesRef.current.get(currentRunIndexRef.current);
       if (!run) {
@@ -1161,6 +1180,8 @@ function App() {
         nextStatus = "extinct";
       } else if (endKind === "static") {
         nextStatus = "static";
+      } else if (endKind === "stable") {
+        nextStatus = "stable";
       }
       const next: RunSummary = {
         ...run,
@@ -1168,6 +1189,7 @@ function App() {
         simSeconds,
         extinctionSeconds: endKind === "extinct" ? simSeconds : run.extinctionSeconds,
         staticSimSeconds: endKind === "static" ? simSeconds : run.staticSimSeconds,
+        stableSimSeconds: endKind === "stable" ? simSeconds : run.stableSimSeconds,
         particlesPeak: Math.max(run.particlesPeak, particlesNow),
         nonAmorMin: Math.min(run.nonAmorMin, nonAmorNow),
         nonAmorMax: Math.max(run.nonAmorMax, nonAmorNow),
@@ -1212,6 +1234,7 @@ function App() {
     setStaticUniverseNotice(null);
     setStaticUniverseSeconds(null);
     setAutoRestartCountdown(null);
+    autoSpeedStageRef.current = 0;
     setArchetypeCounts(countArchetypes(particles));
     setPaused(false);
   }, []);
@@ -1220,6 +1243,10 @@ function App() {
   const restartUniverseSameConfig = useCallback(() => {
     if (sessionModeRef.current === null) {
       return;
+    }
+    if (sessionModeRef.current === "auto") {
+      setTimeScale(1);
+      autoSpeedStageRef.current = 0;
     }
     resetUniverse(currentConfigRef.current);
     currentRunIndexRef.current += 1;
@@ -1256,6 +1283,8 @@ function App() {
     autoRunUniqueSetsRef.current = [];
     autoRunScheduleMinRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MIN_REPEAT;
     autoRunScheduleMaxRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MAX_REPEAT;
+    autoSpeedStageRef.current = 0;
+    stableUniverseIdRef.current = 0;
     sessionIdRef.current = "";
     sessionModeRef.current = null;
     currentRunIndexRef.current = 0;
@@ -1372,6 +1401,8 @@ function App() {
     autoRunUniqueSetsRef.current = [];
     autoRunScheduleMinRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MIN_REPEAT;
     autoRunScheduleMaxRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MAX_REPEAT;
+    autoSpeedStageRef.current = 0;
+    stableUniverseIdRef.current = 0;
     markdownFileHandleRef.current = null;
     markdownWriteChainRef.current = Promise.resolve();
     try {
@@ -1501,8 +1532,12 @@ function App() {
         autoRunScheduleMinRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MIN_REPEAT;
         autoRunScheduleMaxRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MAX_REPEAT;
       }
+      stableUniverseIdRef.current = 0;
       const runConfig =
         mode === "auto" ? autoRunScheduleRef.current[0] ?? randomSessionConfig() : baseConfig;
+      if (mode === "auto") {
+        setTimeScale(1);
+      }
       resetUniverse(runConfig);
       nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
       initRunSummary(mode, currentRunIndexRef.current, runConfig);
@@ -2441,19 +2476,9 @@ function App() {
                   if (autoRestartTimeoutRef.current !== null) {
                     window.clearTimeout(autoRestartTimeoutRef.current);
                   }
+                  const nextRun = currentRunIndexRef.current + 1;
                   autoRestartTimeoutRef.current = window.setTimeout(() => {
-                    currentRunIndexRef.current += 1;
-                    const sch = autoRunScheduleRef.current;
-                    const idx = currentRunIndexRef.current - 1;
-                    const nextConfig =
-                      idx >= 0 && idx < sch.length ? cloneSessionConfig(sch[idx]!) : randomSessionConfig();
-                    resetUniverse(nextConfig);
-                    nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-                    initRunSummary("auto", currentRunIndexRef.current, nextConfig);
-                    setExtinctionNotice(null);
-                    setStaticUniverseNotice(null);
-                    setAutoRestartCountdown(null);
-                    autoRestartTimeoutRef.current = null;
+                    startNextAutoRun(nextRun);
                   }, 1000);
                 } else if (sm === "auto") {
                   setAutoRunCompleted(currentRunIndexRef.current);
@@ -2564,6 +2589,75 @@ function App() {
       if (time - lastFpsTimeRef.current >= 1000) {
         const runSeconds = simulationStepsRef.current / 60;
         const nonAmorCount = particles.reduce((total, particle) => total + (particle.type === "AMOR" ? 0 : 1), 0);
+        if (
+          sessionMode === "auto" &&
+          !extinctionRecordedRef.current &&
+          !staticRecordedRef.current
+        ) {
+          const targetSpeed =
+            runSeconds >= AUTO_RUN_SPEED_25_AT
+              ? 25
+              : runSeconds >= AUTO_RUN_SPEED_20_AT
+                ? 20
+                : runSeconds >= AUTO_RUN_SPEED_5_AT
+                  ? 5
+                  : 1;
+          const stage =
+            runSeconds >= AUTO_RUN_SPEED_25_AT
+              ? 3
+              : runSeconds >= AUTO_RUN_SPEED_20_AT
+                ? 2
+                : runSeconds >= AUTO_RUN_SPEED_5_AT
+                  ? 1
+                  : 0;
+          if (stage > autoSpeedStageRef.current || Math.abs(timeScaleRef.current - targetSpeed) > 0.001) {
+            autoSpeedStageRef.current = stage;
+            setTimeScale(targetSpeed);
+          }
+          if (runSeconds >= AUTO_RUN_STABLE_AT) {
+            const stableId = stableUniverseIdRef.current + 1;
+            stableUniverseIdRef.current = stableId;
+            updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, "stable");
+            upsertRunSummary({ runIndex: currentRunIndexRef.current, stableUniverseId: stableId });
+            setPaused(true);
+            setExtinctionNotice(null);
+            if (currentRunIndexRef.current < autoRunTargetRef.current) {
+              setAutoRunCompleted(currentRunIndexRef.current);
+              setStaticUniverseNotice(
+                `Universe Stable! US-${stableId} reached ${AUTO_RUN_STABLE_AT} sim seconds in run ${currentRunIndexRef.current}. Next run in 1 second...`
+              );
+              setAutoRestartCountdown(1);
+              if (autoRestartTimeoutRef.current !== null) {
+                window.clearTimeout(autoRestartTimeoutRef.current);
+              }
+              const nextRun = currentRunIndexRef.current + 1;
+              autoRestartTimeoutRef.current = window.setTimeout(() => {
+                startNextAutoRun(nextRun);
+              }, 1000);
+            } else {
+              setAutoRunCompleted(currentRunIndexRef.current);
+              setStaticUniverseNotice(
+                `Universe Stable! US-${stableId} reached ${AUTO_RUN_STABLE_AT} sim seconds on final auto run (${currentRunIndexRef.current}).`
+              );
+              setAutoRestartCountdown(null);
+            }
+            setFps(frameCounterRef.current);
+            frameCounterRef.current = 0;
+            lastFpsTimeRef.current = time;
+            setParticleCount(particles.length);
+            setAmorCount(particles.filter((particle) => particle.type === "AMOR").length);
+            setResidualCount(residuals.length);
+            setExplosionPhaseActive(simulationStepsRef.current <= EXPLOSION_PHASE_STEPS);
+            setElapsedSimSeconds(runSeconds);
+            setSubstepsPerFrame(frameCounterRef.current > 0 ? substepsAccumulatorRef.current / frameCounterRef.current : 0);
+            setInteractionChecksPerSecond(interactionChecksAccumulatorRef.current);
+            substepsAccumulatorRef.current = 0;
+            interactionChecksAccumulatorRef.current = 0;
+            setArchetypeCounts(countArchetypes(particles));
+            rafRef.current = window.requestAnimationFrame(drawFrame);
+            return;
+          }
+        }
         while (simulationStepsRef.current >= nextCheckpointStepRef.current && nonAmorCount > 0) {
           updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, "none");
           nextCheckpointStepRef.current += CHECKPOINT_INTERVAL_STEPS;
@@ -2589,19 +2683,9 @@ function App() {
             if (autoRestartTimeoutRef.current !== null) {
               window.clearTimeout(autoRestartTimeoutRef.current);
             }
+            const nextRun = currentRunIndexRef.current + 1;
             autoRestartTimeoutRef.current = window.setTimeout(() => {
-              currentRunIndexRef.current += 1;
-              const sch = autoRunScheduleRef.current;
-              const idx = currentRunIndexRef.current - 1;
-              const nextConfig =
-                idx >= 0 && idx < sch.length ? cloneSessionConfig(sch[idx]!) : randomSessionConfig();
-              resetUniverse(nextConfig);
-              nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-              initRunSummary("auto", currentRunIndexRef.current, nextConfig);
-              setExtinctionNotice(null);
-              setStaticUniverseNotice(null);
-              setAutoRestartCountdown(null);
-              autoRestartTimeoutRef.current = null;
+              startNextAutoRun(nextRun);
             }, 1000);
           } else if (sessionMode === "auto") {
             setAutoRunCompleted(currentRunIndexRef.current);
@@ -2663,6 +2747,10 @@ function App() {
 
   const restartAfterRunEnd = useCallback(() => {
     currentRunIndexRef.current += 1;
+    if (sessionModeRef.current === "auto") {
+      setTimeScale(1);
+      autoSpeedStageRef.current = 0;
+    }
     resetUniverse(currentConfigRef.current);
     nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
     initRunSummary(sessionModeRef.current ?? "individual", currentRunIndexRef.current, currentConfigRef.current);
@@ -2670,6 +2758,61 @@ function App() {
     setStaticUniverseNotice(null);
     setAutoRestartCountdown(null);
   }, [initRunSummary, resetUniverse]);
+
+  const startNextAutoRun = useCallback(
+    (nextRunIndex: number) => {
+      const sch = autoRunScheduleRef.current;
+      const idx = nextRunIndex - 1;
+      const nextConfig = idx >= 0 && idx < sch.length ? cloneSessionConfig(sch[idx]!) : randomSessionConfig();
+      currentRunIndexRef.current = nextRunIndex;
+      setTimeScale(1);
+      autoSpeedStageRef.current = 0;
+      resetUniverse(nextConfig);
+      nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+      initRunSummary("auto", currentRunIndexRef.current, nextConfig);
+      setExtinctionNotice(null);
+      setStaticUniverseNotice(null);
+      setAutoRestartCountdown(null);
+      autoRestartTimeoutRef.current = null;
+    },
+    [initRunSummary, resetUniverse]
+  );
+
+  const confirmSkipToNextAutoRun = useCallback(() => {
+    if (sessionModeRef.current !== "auto") {
+      return;
+    }
+    const wasPaused = pausedRef.current;
+    setPaused(true);
+    const ok = window.confirm(
+      "Skip this auto run and move to the next one? Current run metrics will be saved before advancing."
+    );
+    if (!ok) {
+      setPaused(wasPaused);
+      return;
+    }
+    const particles = particlesRef.current;
+    const residuals = residualsRef.current;
+    const runSeconds = simulationStepsRef.current / 60;
+    const nonAmorCount = particles.reduce((total, particle) => total + (particle.type === "AMOR" ? 0 : 1), 0);
+    updateCurrentRunSummary(runSeconds, particles.length, nonAmorCount, residuals.length, "none");
+    if (currentRunIndexRef.current < autoRunTargetRef.current) {
+      setAutoRunCompleted(currentRunIndexRef.current);
+      setStaticUniverseNotice(`Run ${currentRunIndexRef.current} skipped by user. Next run in 1 second...`);
+      setAutoRestartCountdown(1);
+      if (autoRestartTimeoutRef.current !== null) {
+        window.clearTimeout(autoRestartTimeoutRef.current);
+      }
+      const nextRun = currentRunIndexRef.current + 1;
+      autoRestartTimeoutRef.current = window.setTimeout(() => {
+        startNextAutoRun(nextRun);
+      }, 1000);
+      return;
+    }
+    setAutoRunCompleted(currentRunIndexRef.current);
+    setStaticUniverseNotice(`Final auto run (${currentRunIndexRef.current}) skipped by user. No further runs.`);
+    setAutoRestartCountdown(null);
+  }, [startNextAutoRun, updateCurrentRunSummary]);
 
   if (setupOpen) {
     return (
@@ -3089,7 +3232,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.21</strong>
+            <strong>Universe Game v1.4.0</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
@@ -3122,7 +3265,7 @@ function App() {
           </div>
           {showHelp ? (
             <p className="dim">
-              Drag: pan • Pinch/Scroll: zoom • Space: pause • R or Reset universe: same parameters, new run in the log • Big Bang Reset: pause, confirm, save log, return to setup • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance • Sim timer
+              Drag: pan • Pinch/Scroll: zoom • Space: pause • R or Reset universe: same parameters, new run in the log • Auto Next run: confirm skip + save + advance • Big Bang Reset: pause, confirm, save log, return to setup • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance • Sim timer
               scales with the Time control. If total and non-Amor counts stay identical for {STATIC_UNIVERSE_UNCHANGED_SIM_SECONDS} sim seconds, a Static Universe pause triggers (like extinction).
             </p>
           ) : null}
@@ -3192,6 +3335,17 @@ function App() {
           >
             Reset universe
           </button>
+          {sessionMode === "auto" ? (
+            <button
+              type="button"
+              onClick={() => {
+                wakeHud();
+                confirmSkipToNextAutoRun();
+              }}
+            >
+              Next run
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={async () => {
@@ -3215,7 +3369,13 @@ function App() {
       {extinctionNotice || staticUniverseNotice ? (
         <div className="event-overlay">
           <section className="event-card">
-            <h3>{extinctionNotice ? "Extinction Event!" : "Static universe"}</h3>
+            <h3>
+              {extinctionNotice
+                ? "Extinction Event!"
+                : (staticUniverseNotice ?? "").startsWith("Universe Stable!")
+                  ? "Universe Stable!"
+                  : "Static universe"}
+            </h3>
             <p>{extinctionNotice ?? staticUniverseNotice}</p>
             {sessionMode === "individual" ? (
               <button

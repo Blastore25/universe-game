@@ -1,6 +1,6 @@
 # Universe Game - Fundamental Rules (Current Implementation)
 
-**Version:** `v1.3.21`
+**Version:** `v1.4.0`
 
 This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 
@@ -27,7 +27,7 @@ Default starting counts (editable at session start):
 ## Session Modes
 
 - **Individual session:** one configured universe at a time (manual reset available).
-- **Auto mode:** at session start the app builds a **full shuffled list** of run parameter sets for the requested run count. You set **min** and **max repeats per fingerprint** (defaults 3 and 5; clamped 1–500). Each **unique** fingerprint gets a stable **parameter set ID** (1-based) and appears that many times when the math allows (`N` between `⌈N/max⌉` and `⌊N/min⌋` unique sets); impossible combinations fall back to capping repeats at **max** per fingerprint. Configs are drawn from the usual random ranges but pass a **mild** filter (population headroom, archetype floors, bounded death/rarity tuning). Runs advance on **extinction** or **Static Universe** using the next entry in that list. The Markdown log includes a **pre-generated schedule** summary (IDs, fingerprint prefixes, repeat counts) plus per-run **Parameter set ID**, fingerprint prefix, and full parameters.
+- **Auto mode:** at session start the app builds a **full shuffled list** of run parameter sets for the requested run count. You set **min** and **max repeats per fingerprint** (defaults 3 and 5; clamped 1–500). Each **unique** fingerprint gets a stable **parameter set ID** (1-based) and appears that many times when the math allows (`N` between `⌈N/max⌉` and `⌊N/min⌋` unique sets); impossible combinations fall back to capping repeats at **max** per fingerprint. Configs are drawn from the usual random ranges but pass a **mild** filter (population headroom, archetype floors, bounded death/rarity tuning). Each auto run starts at **1×** Time; without extinction or static-universe end, enforced speed steps up at sim-time thresholds: **5×** at 500 s, **20×** at 2000 s, **25×** at 6000 s. If sim time reaches **15000** s still without extinction or static, the run ends as **Universe Stable!**, receives a **Universe Stable ID** (`US-<n>`) in the log, and (when not the final run) the next scheduled run starts after one second. Runs also advance on **extinction** or **Static Universe** using the next entry in that list. The HUD offers **Next run** (confirm, save current run, then advance). The Markdown log includes a **pre-generated schedule** summary (IDs, fingerprint prefixes, repeat counts) plus per-run **Parameter set ID**, fingerprint prefix, full parameters, and stable-ID fields when applicable.
 - **Strict setup-first flow:** while setup is open, simulation canvas/loop/input listeners are not mounted; the universe starts only after explicit `Start`.
 - **Big Bang Reset (HUD):** pauses the sim, asks for confirmation, then **writes the session Markdown log** (if a file was chosen at session start), clears that file handle and in-memory session data, and returns to the setup screen with defaults so the next **Start** behaves like a new session (including a new save dialog).
 
@@ -130,7 +130,7 @@ When the browser supports the File System Access API, session start opens **one*
 
 - **Individual mode:** one **## Run N** section for the current universe run, updated at checkpoints / extinction / static universe.
 - **Auto mode:** one **## Run N** section per tested universe run, each updated through that run lifecycle.
-- **Status** in the metrics table is `ongoing`, `extinct`, or `static`, with extinction and static sim times when applicable, plus tunable parameters and telemetry fields in tables. **Auto mode** adds **Parameter set ID** and **Fingerprint (prefix)** to each run’s metrics table.
+- **Status** in the metrics table is `ongoing`, `extinct`, `static`, or `stable` (long-horizon auto cutoff), with extinction, static, and stable sim times when applicable, plus tunable parameters and telemetry fields in tables. **Auto mode** adds **Parameter set ID**, **Fingerprint (prefix)**, and **Universe Stable ID** when a run completes as Universe Stable.
 - **Brief history** lines capture checkpoint-style population/residual peaks; skim metrics tables for structured values.
 
 ---

@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.4.0` - **Auto mode** sim-time speed ladder (1x→5x→20x→25x), **Universe Stable!** cutoff at 15k sim s with `US-` ID in Markdown, HUD **Next run** (confirm + save + advance).
 - `v1.3.21` - Fix blank screen after **Big Bang Reset -> Start** by re-arming the render loop; includes HUD **Reset universe** flow with current parameters.
 - `v1.3.20` - **Auto mode** schedule: configurable **min/max repeats per fingerprint**, stable **parameter set IDs** and fingerprint prefixes in session Markdown (per run + schedule table).
 - `v1.3.19` - **Auto mode** pre-builds a shuffled **parameter schedule** (each unique config **3–5×** when feasible, mild random filters); advances use the list; schedule is saved in session Markdown.
@@ -32,6 +33,12 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.4.0`
+
+- Auto runs start at **1×** Time; sim time thresholds raise enforced speed to **5×** (500 s), **20×** (2000 s), **25×** (6000 s) when there is no extinction or static-universe end yet.
+- If a run reaches **15000** sim seconds under those conditions, it ends as **Universe Stable!**, assigns a monotonic **Universe Stable ID** (`US-<n>`) saved in the run log, pauses, and advances to the next scheduled run after one second (or ends on the final run).
+- HUD **Next run** (auto only): pause, confirm, flush current run metrics, then advance like other auto transitions.
 
 ### `v1.3.21`
 
