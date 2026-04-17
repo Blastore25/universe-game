@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.19` - **Auto mode** pre-builds a shuffled **parameter schedule** (each unique config **3–5×** when feasible, mild random filters); advances use the list; schedule is saved in session Markdown.
 - `v1.3.18` - **Big Bang Reset** pauses, confirms, **flushes session `.md`**, then returns to **setup** (fresh defaults, new save prompt on next Start).
 - `v1.3.17` - Balanced **ecology** (unified non-Amor death, normalized birth rates, Void replenishment rules), **Void↔Bloom** symmetry, **residual mutation**, rolling-window **telemetry** embedded in the session Markdown log.
 - `v1.3.16` - Session export is **Markdown-only** (`.md`): single save dialog at session start; full-file rewrite on each flush; CSV export removed.
@@ -29,6 +30,12 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.19`
+
+- Auto sessions **pre-generate** all run configs (shuffled order): **K** unique mild fingerprints with **3–5** repeats each when `⌈N/5⌉ ≤ ⌊N/3⌋`; small **N** falls back to capping repeats at 5 without a strict minimum.
+- Extinction/static **next-run** picks `schedule[runIndex - 1]` instead of fresh `randomConfig()`.
+- Session Markdown gains an **Auto mode — pre-generated parameter schedule** section (unique configs + repeat counts).
 
 ### `v1.3.18`
 

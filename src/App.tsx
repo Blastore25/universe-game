@@ -254,7 +254,8 @@ function buildSessionMarkdownDoc(
       birthReasons: Record<string, number>;
       deathReasons: Record<string, number>;
     } | null;
-  }
+  },
+  autoRunSchedule: SessionConfig[] | null
 ): string {
   const lines: string[] = [];
   const sid = runs.length > 0 ? runs[0].sessionId : sessionIdFallback;
@@ -271,6 +272,12 @@ function buildSessionMarkdownDoc(
   lines.push("");
   lines.push("---");
   lines.push("");
+
+  if (autoRunSchedule && autoRunSchedule.length > 0) {
+    lines.push(formatAutoScheduleMarkdown(autoRunSchedule));
+    lines.push("---");
+    lines.push("");
+  }
 
   if (runs.length === 0) {
     lines.push("*No runs recorded yet.*");
@@ -384,6 +391,219 @@ function createSetupDraft(config: SessionConfig, autoRunTarget: number): SetupDr
     adaptivePerformanceMode: config.adaptivePerformanceMode,
     autoRunTarget: String(autoRunTarget)
   };
+}
+
+/** Per unique auto config: at least this many runs, at most that many (when schedule math allows). */
+const AUTO_SCHEDULE_MIN_REPEAT = 3;
+const AUTO_SCHEDULE_MAX_REPEAT = 5;
+
+function randomSessionConfig(): SessionConfig {
+  const randInt = (min: number, max: number) => Math.floor(min + Math.random() * (max - min + 1));
+  const randFloat = (min: number, max: number) => min + Math.random() * (max - min);
+  return {
+    counts: {
+      PULSE: randInt(20, 90),
+      BLOOM: randInt(20, 110),
+      ECHO: randInt(20, 95),
+      VOID: randInt(10, 70),
+      AMOR: randInt(4, 26)
+    },
+    maxParticles: randInt(600, 2200),
+    attractionScale: randFloat(0.55, 1.7),
+    sameTypeRepulsion: randFloat(0.012, 0.07),
+    amorPairForce: randFloat(0.14, 0.34),
+    influenceTtlBase: randInt(120, 420),
+    influenceTtlExplosionBase: randInt(80, 220),
+    lowPopulationThreshold: randInt(240, 900),
+    lowPopulationDeathScale: randFloat(0.2, 0.85),
+    rarityBirthBoost: randFloat(0.4, 2.5),
+    diversityFloor: randInt(20, 220),
+    loveDeathProtection: randFloat(0.2, 0.9),
+    adaptivePerformanceMode: true
+  };
+}
+
+function cloneSessionConfig(c: SessionConfig): SessionConfig {
+  return {
+    ...c,
+    counts: { ...c.counts }
+  };
+}
+
+function sessionConfigFingerprint(c: SessionConfig): string {
+  const q = (n: number, d: number) => Math.round(n * 10 ** d) / 10 ** d;
+  return JSON.stringify({
+    counts: c.counts,
+    maxParticles: c.maxParticles,
+    attractionScale: q(c.attractionScale, 4),
+    sameTypeRepulsion: q(c.sameTypeRepulsion, 5),
+    amorPairForce: q(c.amorPairForce, 4),
+    influenceTtlBase: c.influenceTtlBase,
+    influenceTtlExplosionBase: c.influenceTtlExplosionBase,
+    lowPopulationThreshold: c.lowPopulationThreshold,
+    lowPopulationDeathScale: q(c.lowPopulationDeathScale, 4),
+    rarityBirthBoost: q(c.rarityBirthBoost, 4),
+    diversityFloor: c.diversityFloor,
+    loveDeathProtection: q(c.loveDeathProtection, 4),
+    adaptivePerformanceMode: c.adaptivePerformanceMode
+  });
+}
+
+function isMildAutoConfig(c: SessionConfig): boolean {
+  const { counts, maxParticles, lowPopulationDeathScale, rarityBirthBoost, diversityFloor } = c;
+  const total = counts.PULSE + counts.BLOOM + counts.ECHO + counts.VOID + counts.AMOR;
+  if (total < 75 || total > 390) {
+    return false;
+  }
+  if (counts.PULSE < 6 || counts.BLOOM < 6 || counts.ECHO < 6 || counts.VOID < 5 || counts.AMOR < 3) {
+    return false;
+  }
+  if (maxParticles < total + 160 || maxParticles > 2750) {
+    return false;
+  }
+  if (lowPopulationDeathScale < 0.14 || lowPopulationDeathScale > 0.9) {
+    return false;
+  }
+  if (rarityBirthBoost < 0.38 || rarityBirthBoost > 2.6) {
+    return false;
+  }
+  if (diversityFloor < 16 || diversityFloor > 400) {
+    return false;
+  }
+  return true;
+}
+
+function shuffleArray<T>(items: T[]): void {
+  for (let i = items.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = items[i];
+    items[i] = items[j]!;
+    items[j] = t!;
+  }
+}
+
+/**
+ * Build `n` run configs for auto mode: pick K unique mild fingerprints, each used 3–5 times (when feasible),
+ * then shuffle run order. Small `n` uses a relaxed cap (no more than 5 identical fingerprints).
+ */
+function buildAutoRunSchedule(n: number): SessionConfig[] {
+  if (n <= 0) {
+    return [];
+  }
+  const minK = Math.ceil(n / AUTO_SCHEDULE_MAX_REPEAT);
+  const maxK = Math.floor(n / AUTO_SCHEDULE_MIN_REPEAT);
+
+  if (minK > maxK) {
+    const out: SessionConfig[] = [];
+    const fpCounts = new Map<string, number>();
+    let guard = 0;
+    while (out.length < n && guard < n * 400) {
+      guard += 1;
+      const c = randomSessionConfig();
+      if (!isMildAutoConfig(c)) {
+        continue;
+      }
+      const fp = sessionConfigFingerprint(c);
+      if ((fpCounts.get(fp) ?? 0) >= AUTO_SCHEDULE_MAX_REPEAT) {
+        continue;
+      }
+      out.push(cloneSessionConfig(c));
+      fpCounts.set(fp, (fpCounts.get(fp) ?? 0) + 1);
+    }
+    while (out.length < n) {
+      out.push(cloneSessionConfig(randomSessionConfig()));
+    }
+    shuffleArray(out);
+    return out;
+  }
+
+  let k = Math.round(n / 4);
+  k = Math.max(minK, Math.min(maxK, k));
+
+  const unique: SessionConfig[] = [];
+  const seen = new Set<string>();
+  let attempts = 0;
+  const maxAttempts = Math.max(800, k * 500);
+  while (unique.length < k && attempts < maxAttempts) {
+    attempts += 1;
+    const c = randomSessionConfig();
+    if (!isMildAutoConfig(c)) {
+      continue;
+    }
+    const fp = sessionConfigFingerprint(c);
+    if (seen.has(fp)) {
+      continue;
+    }
+    seen.add(fp);
+    unique.push(cloneSessionConfig(c));
+  }
+
+  while (unique.length < k) {
+    unique.push(cloneSessionConfig(randomSessionConfig()));
+  }
+
+  const repeats = new Array(k).fill(AUTO_SCHEDULE_MIN_REPEAT);
+  let remainder = n - AUTO_SCHEDULE_MIN_REPEAT * k;
+  let ri = 0;
+  while (remainder > 0 && ri < k * 20) {
+    const idx = ri % k;
+    if (repeats[idx]! < AUTO_SCHEDULE_MAX_REPEAT) {
+      repeats[idx]! += 1;
+      remainder -= 1;
+    }
+    ri += 1;
+  }
+
+  const schedule: SessionConfig[] = [];
+  for (let i = 0; i < k; i += 1) {
+    for (let r = 0; r < repeats[i]!; r += 1) {
+      schedule.push(cloneSessionConfig(unique[i]!));
+    }
+  }
+  while (schedule.length < n) {
+    schedule.push(cloneSessionConfig(unique[schedule.length % k]!));
+  }
+  while (schedule.length > n) {
+    schedule.pop();
+  }
+  shuffleArray(schedule);
+  return schedule;
+}
+
+function formatAutoScheduleMarkdown(schedule: SessionConfig[]): string {
+  if (schedule.length === 0) {
+    return "";
+  }
+  const lines: string[] = [];
+  lines.push("## Auto mode — pre-generated parameter schedule");
+  lines.push("");
+  lines.push(
+    `**${schedule.length}** runs. Each unique parameter set is used **${AUTO_SCHEDULE_MIN_REPEAT}–${AUTO_SCHEDULE_MAX_REPEAT}** times when the run count allows; configs pass a **mild** filter (population headroom, archetype floors, bounded death/rarity tuning). Run order is **shuffled** — see each \`## Run n\` for the exact block used.`
+  );
+  lines.push("");
+  const groups = new Map<string, { config: SessionConfig; count: number }>();
+  for (const c of schedule) {
+    const fp = sessionConfigFingerprint(c);
+    const g = groups.get(fp);
+    if (g) {
+      g.count += 1;
+    } else {
+      groups.set(fp, { config: cloneSessionConfig(c), count: 1 });
+    }
+  }
+  lines.push("### Unique configs (repeat counts in this session)");
+  lines.push("");
+  lines.push("| ID | Runs | P | B | E | V | A | maxP | attr | repulse | AmorF | TTLn | TTLx | Lpop | deathSc | rare | div | loveP |");
+  lines.push("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|");
+  let id = 0;
+  for (const { config: c, count } of groups.values()) {
+    id += 1;
+    lines.push(
+      `| ${id} | ${count} | ${c.counts.PULSE} | ${c.counts.BLOOM} | ${c.counts.ECHO} | ${c.counts.VOID} | ${c.counts.AMOR} | ${c.maxParticles} | ${c.attractionScale.toFixed(2)} | ${c.sameTypeRepulsion.toFixed(3)} | ${c.amorPairForce.toFixed(2)} | ${c.influenceTtlBase} | ${c.influenceTtlExplosionBase} | ${c.lowPopulationThreshold} | ${c.lowPopulationDeathScale.toFixed(2)} | ${c.rarityBirthBoost.toFixed(2)} | ${c.diversityFloor} | ${c.loveDeathProtection.toFixed(2)} |`
+    );
+  }
+  lines.push("");
+  return lines.join("\n");
 }
 
 const ATTRACTION_MATRIX: Record<ArchetypeKey, Partial<Record<ArchetypeKey, number>>> = {
@@ -613,6 +833,8 @@ function App() {
     birthReasons: {} as Record<string, number>,
     deathReasons: {} as Record<string, number>
   });
+  /** Auto mode only: full list of run configs (shuffled); run `k` uses `schedule[k - 1]`. */
+  const autoRunScheduleRef = useRef<SessionConfig[]>([]);
   const runSummariesRef = useRef<Map<number, RunSummary>>(new Map());
   const autoRestartTimeoutRef = useRef<number | null>(null);
   const extinctionRecordedRef = useRef(false);
@@ -736,10 +958,19 @@ function App() {
       birthReasons: { ...tr.birthReasons },
       deathReasons: { ...tr.deathReasons }
     };
-    const content = buildSessionMarkdownDoc(runs, sessionIdRef.current, {
-      completed: [...tr.completed],
-      partial
-    });
+    const autoScheduleSnap =
+      autoRunScheduleRef.current.length > 0
+        ? autoRunScheduleRef.current.map((c) => cloneSessionConfig(c))
+        : null;
+    const content = buildSessionMarkdownDoc(
+      runs,
+      sessionIdRef.current,
+      {
+        completed: [...tr.completed],
+        partial
+      },
+      autoScheduleSnap
+    );
     const handle = markdownFileHandleRef.current;
     if (!handle) {
       return Promise.resolve();
@@ -831,31 +1062,7 @@ function App() {
     [flushSessionMarkdown]
   );
 
-  const randomConfig = useCallback((): SessionConfig => {
-    const randInt = (min: number, max: number) => Math.floor(min + Math.random() * (max - min + 1));
-    const randFloat = (min: number, max: number) => min + Math.random() * (max - min);
-    return {
-      counts: {
-        PULSE: randInt(20, 90),
-        BLOOM: randInt(20, 110),
-        ECHO: randInt(20, 95),
-        VOID: randInt(10, 70),
-        AMOR: randInt(4, 26)
-      },
-      maxParticles: randInt(600, 2200),
-      attractionScale: randFloat(0.55, 1.7),
-      sameTypeRepulsion: randFloat(0.012, 0.07),
-      amorPairForce: randFloat(0.14, 0.34),
-      influenceTtlBase: randInt(120, 420),
-      influenceTtlExplosionBase: randInt(80, 220),
-      lowPopulationThreshold: randInt(240, 900),
-      lowPopulationDeathScale: randFloat(0.2, 0.85),
-      rarityBirthBoost: randFloat(0.4, 2.5),
-      diversityFloor: randInt(20, 220),
-      loveDeathProtection: randFloat(0.2, 0.9),
-      adaptivePerformanceMode: true
-    };
-  }, []);
+  const randomConfig = useCallback((): SessionConfig => randomSessionConfig(), []);
 
   const resetUniverse = useCallback((config: SessionConfig) => {
     nextParticleId = 1;
@@ -909,6 +1116,7 @@ function App() {
       birthReasons: {},
       deathReasons: {}
     };
+    autoRunScheduleRef.current = [];
     sessionIdRef.current = "";
     sessionModeRef.current = null;
     currentRunIndexRef.current = 0;
@@ -1020,6 +1228,7 @@ function App() {
       birthReasons: {},
       deathReasons: {}
     };
+    autoRunScheduleRef.current = [];
     markdownFileHandleRef.current = null;
     markdownWriteChainRef.current = Promise.resolve();
     try {
@@ -1107,13 +1316,15 @@ function App() {
       setExtinctionAvgSeconds(null);
       autoRunTargetRef.current = mode === "auto" ? Math.max(1, autoRuns) : 1;
       currentRunIndexRef.current = 1;
-      const runConfig = mode === "auto" ? randomConfig() : baseConfig;
+      autoRunScheduleRef.current = mode === "auto" ? buildAutoRunSchedule(autoRunTargetRef.current) : [];
+      const runConfig =
+        mode === "auto" ? autoRunScheduleRef.current[0] ?? randomSessionConfig() : baseConfig;
       resetUniverse(runConfig);
       nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
       initRunSummary(mode, currentRunIndexRef.current, runConfig);
       appendSetupDebug("startSession complete");
     },
-    [appendSetupDebug, initRunSummary, openSessionMarkdown, randomConfig, resetUniverse]
+    [appendSetupDebug, initRunSummary, openSessionMarkdown, resetUniverse]
   );
 
   useEffect(() => {
@@ -2049,7 +2260,10 @@ function App() {
                   }
                   autoRestartTimeoutRef.current = window.setTimeout(() => {
                     currentRunIndexRef.current += 1;
-                    const nextConfig = randomConfig();
+                    const sch = autoRunScheduleRef.current;
+                    const idx = currentRunIndexRef.current - 1;
+                    const nextConfig =
+                      idx >= 0 && idx < sch.length ? cloneSessionConfig(sch[idx]!) : randomSessionConfig();
                     resetUniverse(nextConfig);
                     nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
                     initRunSummary("auto", currentRunIndexRef.current, nextConfig);
@@ -2194,7 +2408,10 @@ function App() {
             }
             autoRestartTimeoutRef.current = window.setTimeout(() => {
               currentRunIndexRef.current += 1;
-              const nextConfig = randomConfig();
+              const sch = autoRunScheduleRef.current;
+              const idx = currentRunIndexRef.current - 1;
+              const nextConfig =
+                idx >= 0 && idx < sch.length ? cloneSessionConfig(sch[idx]!) : randomSessionConfig();
               resetUniverse(nextConfig);
               nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
               initRunSummary("auto", currentRunIndexRef.current, nextConfig);
@@ -2657,7 +2874,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.18</strong>
+            <strong>Universe Game v1.3.19</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
