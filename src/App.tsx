@@ -1216,6 +1216,17 @@ function App() {
     setPaused(false);
   }, []);
 
+  /** Fresh Big Bang with the same `SessionConfig` as the current run (matches keyboard `R`). */
+  const restartUniverseSameConfig = useCallback(() => {
+    if (sessionModeRef.current === null) {
+      return;
+    }
+    resetUniverse(currentConfigRef.current);
+    currentRunIndexRef.current += 1;
+    nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+    initRunSummary(sessionModeRef.current ?? "individual", currentRunIndexRef.current, currentConfigRef.current);
+  }, [initRunSummary, resetUniverse]);
+
   const stopAmbientMusic = useCallback(() => {
     if (audioContextRef.current) {
       ambientGainRef.current?.gain.cancelScheduledValues(audioContextRef.current.currentTime);
@@ -1556,10 +1567,7 @@ function App() {
         event.preventDefault();
         setPaused((value) => !value);
       } else if (key === "r") {
-        resetUniverse(currentConfigRef.current);
-        currentRunIndexRef.current += 1;
-        nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-        initRunSummary(sessionModeRef.current ?? "individual", currentRunIndexRef.current, currentConfigRef.current);
+        restartUniverseSameConfig();
       } else if (key === "h") {
         setShowHelp((value) => !value);
       }
@@ -1569,7 +1577,7 @@ function App() {
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [initRunSummary, resetUniverse]);
+  }, [initRunSummary, resetUniverse, restartUniverseSameConfig]);
 
   useEffect(() => {
     if (setupOpen) {
@@ -3112,7 +3120,7 @@ function App() {
           </div>
           {showHelp ? (
             <p className="dim">
-              Drag: pan • Pinch/Scroll: zoom • Space: pause • R: reset universe • Big Bang Reset: pause, confirm, save log, return to setup • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance • Sim timer
+              Drag: pan • Pinch/Scroll: zoom • Space: pause • R or Reset universe: same parameters, new run in the log • Big Bang Reset: pause, confirm, save log, return to setup • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance • Sim timer
               scales with the Time control. If total and non-Amor counts stay identical for {STATIC_UNIVERSE_UNCHANGED_SIM_SECONDS} sim seconds, a Static Universe pause triggers (like extinction).
             </p>
           ) : null}
@@ -3172,6 +3180,15 @@ function App() {
             }}
           >
             {isMusicPlaying ? "Pause Ambient" : "Play Ambient"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              wakeHud();
+              restartUniverseSameConfig();
+            }}
+          >
+            Reset universe
           </button>
           <button
             type="button"
