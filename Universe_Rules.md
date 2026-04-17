@@ -1,6 +1,6 @@
 # Universe Game - Fundamental Rules (Current Implementation)
 
-**Version:** `v1.3.20`
+**Version:** `v1.3.21`
 
 This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 

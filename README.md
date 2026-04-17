@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.21` - Fix blank screen after **Big Bang Reset -> Start** by re-arming the render loop; includes HUD **Reset universe** flow with current parameters.
 - `v1.3.20` - **Auto mode** schedule: configurable **min/max repeats per fingerprint**, stable **parameter set IDs** and fingerprint prefixes in session Markdown (per run + schedule table).
 - `v1.3.19` - **Auto mode** pre-builds a shuffled **parameter schedule** (each unique config **3–5×** when feasible, mild random filters); advances use the list; schedule is saved in session Markdown.
 - `v1.3.18` - **Big Bang Reset** pauses, confirms, **flushes session `.md`**, then returns to **setup** (fresh defaults, new save prompt on next Start).
@@ -31,6 +32,11 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.21`
+
+- Fixed regression where **Big Bang Reset** returned to setup but the next **Start** could render a blank screen (render loop now re-armed when simulation remounts).
+- Added HUD **Reset universe** button parity with keyboard `R`: starts a fresh run with current parameters and logs a new run entry.
 
 ### `v1.3.20`
 

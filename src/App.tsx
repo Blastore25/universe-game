@@ -1592,6 +1592,8 @@ function App() {
     if (!ctx) {
       return;
     }
+    // Re-arm the render loop after setup mode cleanup toggled this off.
+    mountedRef.current = true;
 
     const resizeCanvas = () => {
       canvas.width = window.innerWidth;
@@ -3087,7 +3089,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.20</strong>
+            <strong>Universe Game v1.3.21</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
