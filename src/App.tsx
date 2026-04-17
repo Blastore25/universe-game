@@ -725,7 +725,7 @@ function App() {
     }
   }, []);
 
-  const flushSessionMarkdown = useCallback(() => {
+  const flushSessionMarkdown = useCallback((): Promise<void> => {
     const runs = [...runSummariesRef.current.values()].sort((a, b) => a.runIndex - b.runIndex);
     const tr = telemetryRef.current;
     const partial = {
@@ -742,13 +742,14 @@ function App() {
     });
     const handle = markdownFileHandleRef.current;
     if (!handle) {
-      return;
+      return Promise.resolve();
     }
     markdownWriteChainRef.current = markdownWriteChainRef.current.then(async () => {
       const writable = await handle.createWritable();
       await writable.write(content);
       await writable.close();
     });
+    return markdownWriteChainRef.current;
   }, []);
 
   const upsertRunSummary = useCallback(
@@ -892,6 +893,62 @@ function App() {
     }
     setIsMusicPlaying(false);
   }, []);
+
+  /** Save session MD, clear session file + sim state, show setup as for a new game. */
+  const returnToSetupAfterSave = useCallback(async () => {
+    await flushSessionMarkdown();
+    markdownFileHandleRef.current = null;
+    markdownWriteChainRef.current = Promise.resolve();
+    runSummariesRef.current.clear();
+    telemetryRef.current = {
+      sessionSteps: 0,
+      nextWindowToClose: 0,
+      completed: [],
+      births: emptyArchetypeCountRecord(),
+      deaths: emptyArchetypeCountRecord(),
+      birthReasons: {},
+      deathReasons: {}
+    };
+    sessionIdRef.current = "";
+    sessionModeRef.current = null;
+    currentRunIndexRef.current = 0;
+    autoRunTargetRef.current = 0;
+    nextParticleId = 1;
+    particlesRef.current = [];
+    residualsRef.current = [];
+    residualAccumulatorRef.current = 0;
+    simulationStepsRef.current = 0;
+    nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
+    currentConfigRef.current = DEFAULT_SESSION_CONFIG;
+    setParticleCount(0);
+    setAmorCount(0);
+    setResidualCount(0);
+    setArchetypeCounts(createEmptyArchetypeCounts());
+    setSelectedParticleId(null);
+    setExtinctionNotice(null);
+    setStaticUniverseNotice(null);
+    setExtinctionSeconds(null);
+    setStaticUniverseSeconds(null);
+    setAutoRestartCountdown(null);
+    setElapsedSimSeconds(0);
+    setExplosionPhaseActive(true);
+    setAutoRunCompleted(0);
+    extinctionCountRef.current = 0;
+    extinctionAvgRef.current = null;
+    setExtinctionCount(0);
+    setExtinctionAvgSeconds(null);
+    setSessionExportStatus("No file selected");
+    setSessionMode(null);
+    setSetupDraft(createSetupDraft(DEFAULT_SESSION_CONFIG, 10));
+    setStartupMode("individual");
+    setPaused(false);
+    setSetupOpen(true);
+    stopAmbientMusic();
+    if (autoRestartTimeoutRef.current !== null) {
+      window.clearTimeout(autoRestartTimeoutRef.current);
+      autoRestartTimeoutRef.current = null;
+    }
+  }, [flushSessionMarkdown, stopAmbientMusic]);
 
   const ensureAmbientMusic = useCallback(async () => {
     if (audioContextRef.current) {
@@ -2600,7 +2657,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.17</strong>
+            <strong>Universe Game v1.3.18</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
@@ -2633,7 +2690,7 @@ function App() {
           </div>
           {showHelp ? (
             <p className="dim">
-              Drag: pan • Pinch/Scroll: zoom • Space: pause • R: reset • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance • Sim timer
+              Drag: pan • Pinch/Scroll: zoom • Space: pause • R: reset universe • Big Bang Reset: pause, confirm, save log, return to setup • H: toggle help • Residual Frequencies: attraction, mutation, inspiration, avoidance • Sim timer
               scales with the Time control. If total and non-Amor counts stay identical for {STATIC_UNIVERSE_UNCHANGED_SIM_SECONDS} sim seconds, a Static Universe pause triggers (like extinction).
             </p>
           ) : null}
@@ -2696,12 +2753,17 @@ function App() {
           </button>
           <button
             type="button"
-            onClick={() => {
+            onClick={async () => {
               wakeHud();
-              currentRunIndexRef.current += 1;
-              resetUniverse(currentConfigRef.current);
-              nextCheckpointStepRef.current = CHECKPOINT_INTERVAL_STEPS;
-              initRunSummary(sessionModeRef.current ?? "individual", currentRunIndexRef.current, currentConfigRef.current);
+              setPaused(true);
+              const ok = window.confirm(
+                "Return to setup and start fresh? Your session (runs + telemetry) will be saved to the Markdown file if you chose one at session start. You will pick a new log file the next time you press Start."
+              );
+              if (!ok) {
+                setPaused(false);
+                return;
+              }
+              await returnToSetupAfterSave();
             }}
           >
             Big Bang Reset

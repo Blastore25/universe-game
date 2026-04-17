@@ -1,6 +1,6 @@
 # Universe Game - Fundamental Rules (Current Implementation)
 
-**Version:** `v1.3.17`
+**Version:** `v1.3.18`
 
 This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 
@@ -29,6 +29,7 @@ Default starting counts (editable at session start):
 - **Individual session:** one configured universe at a time (manual reset available).
 - **Auto mode:** randomized parameter set per run; each run advances automatically after **extinction** or a recognized **Static Universe**, until the target run count is reached.
 - **Strict setup-first flow:** while setup is open, simulation canvas/loop/input listeners are not mounted; the universe starts only after explicit `Start`.
+- **Big Bang Reset (HUD):** pauses the sim, asks for confirmation, then **writes the session Markdown log** (if a file was chosen at session start), clears that file handle and in-memory session data, and returns to the setup screen with defaults so the next **Start** behaves like a new session (including a new save dialog).
 
 ## Simulation time (sim seconds)
 

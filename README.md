@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.18` - **Big Bang Reset** pauses, confirms, **flushes session `.md`**, then returns to **setup** (fresh defaults, new save prompt on next Start).
 - `v1.3.17` - Balanced **ecology** (unified non-Amor death, normalized birth rates, Void replenishment rules), **Void↔Bloom** symmetry, **residual mutation**, rolling-window **telemetry** embedded in the session Markdown log.
 - `v1.3.16` - Session export is **Markdown-only** (`.md`): single save dialog at session start; full-file rewrite on each flush; CSV export removed.
 - `v1.3.15` - Optional **Markdown session log** (`.md`) alongside CSV: same flush cadence, human-readable run sections and parameter tables; dual save prompts at session start.
@@ -28,6 +29,10 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.18`
+
+- **Big Bang Reset** now pauses first, shows a **browser confirm** dialog, and on confirm **awaits a Markdown flush** (runs + telemetry), then clears the file handle and simulation state and re-opens **setup** with default parameters so the next Start is a full new session.
 
 ### `v1.3.17`
 
