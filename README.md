@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.17` - Balanced **ecology** (unified non-Amor death, normalized birth rates, Void replenishment rules), **Void↔Bloom** symmetry, **residual mutation**, rolling-window **telemetry** embedded in the session Markdown log.
 - `v1.3.16` - Session export is **Markdown-only** (`.md`): single save dialog at session start; full-file rewrite on each flush; CSV export removed.
 - `v1.3.15` - Optional **Markdown session log** (`.md`) alongside CSV: same flush cadence, human-readable run sections and parameter tables; dual save prompts at session start.
 - `v1.3.14` - **Static Universe** rename and rule: 2000 sim seconds with **no** change in total or non-Amor counts; docs distinguish ecological **stable** (oscillating) universe vs **static** detection; sim timer explicitly tied to Time control.
@@ -27,6 +28,13 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.17`
+
+- **Rolling-window telemetry** (300 session steps per window) with births/deaths per archetype and reason strings; appended to the session `.md` on each flush together with run summaries.
+- **Death:** single ecology probability for non-Amor types with love- and context-based multipliers; Void absorb and Amor sacrifice unchanged.
+- **Birth:** shared `BIRTH_RATE_BASE` across gated births; Bloom double-spawn chance reduced; Amor gifts can include **Void**; **Void** from extinguished high-peak-love deaths; **Void spark** when non-Amor has Amor neighbors but no Void.
+- **Mutation:** rare **Bloom→Void** near Void (mirrors Void→Bloom); residual-field rare archetype hops along Pulse–Bloom–Echo–Void.
 
 ### `v1.3.16`
 

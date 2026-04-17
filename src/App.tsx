@@ -38,6 +38,8 @@ interface Particle {
   type: ArchetypeKey;
   archetype: Archetype;
   love: number;
+  /** Tracks lifetime max love (for Void-from-extinguished spark on death). */
+  peakLove: number;
   chaos: number;
   order: number;
   energy: number;
@@ -45,6 +47,8 @@ interface Particle {
   inactiveSteps: number;
   bondId: number | null;
   age: number;
+  /** Set before enqueueing spawn; consumed when birth is logged to telemetry. */
+  birthReason?: string;
 }
 
 interface ResidualFrequency {
@@ -101,6 +105,106 @@ const CHECKPOINT_INTERVAL_STEPS = 300;
  */
 const STATIC_UNIVERSE_UNCHANGED_SIM_SECONDS = 2000;
 
+/** Rolling telemetry windows (~5 sim seconds each at 60 steps/sim s); ring buffer capped for MD export. */
+const TELEMETRY_WINDOW_STEPS = 300;
+const TELEMETRY_MAX_COMPLETED_WINDOWS = 48;
+/** If a non-Void particle ever reached this peak love and dies at love ≤ 1, a Void may spawn at its site. */
+const PEAK_LOVE_VOID_EXTINGUISH_THRESHOLD = 72;
+/** Second Bloom from same birth event (lowered for balance). */
+const BLOOM_DOUBLE_SPAWN_CHANCE = 0.22;
+/** Shared birth probability scale (gates unchanged; rarity multiplier still applies). */
+const BIRTH_RATE_BASE = 0.00155;
+
+interface TelemetryWindowSnapshot {
+  windowIndex: number;
+  startSimStep: number;
+  endSimStep: number;
+  births: Record<ArchetypeKey, number>;
+  deaths: Record<ArchetypeKey, number>;
+  birthReasons: Record<string, number>;
+  deathReasons: Record<string, number>;
+}
+
+function emptyArchetypeCountRecord(): Record<ArchetypeKey, number> {
+  return { PULSE: 0, BLOOM: 0, ECHO: 0, VOID: 0, AMOR: 0 };
+}
+
+function formatTelemetryMarkdownSection(
+  completed: TelemetryWindowSnapshot[],
+  partial: {
+    windowIndex: number;
+    sessionSteps: number;
+    births: Record<ArchetypeKey, number>;
+    deaths: Record<ArchetypeKey, number>;
+    birthReasons: Record<string, number>;
+    deathReasons: Record<string, number>;
+  } | null
+): string {
+  const lines: string[] = [];
+  lines.push("## Session telemetry (rolling windows)");
+  lines.push("");
+  lines.push(
+    `Each row summarizes one window of **${TELEMETRY_WINDOW_STEPS}** session sim steps (cumulative across runs in this session). Counts are births / deaths per archetype. Reasons aggregate spawn and death labels.`
+  );
+  lines.push("");
+  if (completed.length === 0 && !partial) {
+    lines.push("*No telemetry windows recorded yet.*");
+    lines.push("");
+    return lines.join("\n");
+  }
+  lines.push("| Win | Sim steps (start–end) | P b/d | B b/d | E b/d | V b/d | A b/d |");
+  lines.push("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|");
+  for (const w of completed) {
+    const b = w.births;
+    const d = w.deaths;
+    lines.push(
+      `| ${w.windowIndex} | ${w.startSimStep}–${w.endSimStep} | ${b.PULSE}/${d.PULSE} | ${b.BLOOM}/${d.BLOOM} | ${b.ECHO}/${d.ECHO} | ${b.VOID}/${d.VOID} | ${b.AMOR}/${d.AMOR} |`
+    );
+  }
+  if (partial) {
+    const b = partial.births;
+    const d = partial.deaths;
+    const start = partial.windowIndex * TELEMETRY_WINDOW_STEPS;
+    lines.push(
+      `| ${partial.windowIndex} (in progress) | ${start}–${partial.sessionSteps.toFixed(1)} | ${b.PULSE}/${d.PULSE} | ${b.BLOOM}/${d.BLOOM} | ${b.ECHO}/${d.ECHO} | ${b.VOID}/${d.VOID} | ${b.AMOR}/${d.AMOR} |`
+    );
+  }
+  lines.push("");
+  const reasonKeys = new Set<string>();
+  for (const w of completed) {
+    Object.keys(w.birthReasons).forEach((k) => reasonKeys.add(k));
+    Object.keys(w.deathReasons).forEach((k) => reasonKeys.add(k));
+  }
+  if (partial) {
+    Object.keys(partial.birthReasons).forEach((k) => reasonKeys.add(k));
+    Object.keys(partial.deathReasons).forEach((k) => reasonKeys.add(k));
+  }
+  const sortedReasons = [...reasonKeys].sort();
+  if (sortedReasons.length > 0) {
+    lines.push("### Telemetry reasons (counts per label, all completed windows + in-progress)");
+    lines.push("");
+    lines.push("| Label | Births | Deaths |");
+    lines.push("|:---|---:|---:|");
+    for (const key of sortedReasons) {
+      let birthSum = 0;
+      let deathSum = 0;
+      for (const w of completed) {
+        birthSum += w.birthReasons[key] ?? 0;
+        deathSum += w.deathReasons[key] ?? 0;
+      }
+      if (partial) {
+        birthSum += partial.birthReasons[key] ?? 0;
+        deathSum += partial.deathReasons[key] ?? 0;
+      }
+      if (birthSum > 0 || deathSum > 0) {
+        lines.push(`| \`${key}\` | ${birthSum} | ${deathSum} |`);
+      }
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
 interface SessionConfig {
   counts: Record<ArchetypeKey, number>;
   maxParticles: number;
@@ -137,7 +241,21 @@ interface RunSummary {
 }
 
 /** Human-readable session document from `runSummariesRef`; rewritten in full on each flush. */
-function buildSessionMarkdownDoc(runs: RunSummary[], sessionIdFallback: string): string {
+function buildSessionMarkdownDoc(
+  runs: RunSummary[],
+  sessionIdFallback: string,
+  telemetry: {
+    completed: TelemetryWindowSnapshot[];
+    partial: {
+      windowIndex: number;
+      sessionSteps: number;
+      births: Record<ArchetypeKey, number>;
+      deaths: Record<ArchetypeKey, number>;
+      birthReasons: Record<string, number>;
+      deathReasons: Record<string, number>;
+    } | null;
+  }
+): string {
   const lines: string[] = [];
   const sid = runs.length > 0 ? runs[0].sessionId : sessionIdFallback;
 
@@ -157,6 +275,7 @@ function buildSessionMarkdownDoc(runs: RunSummary[], sessionIdFallback: string):
   if (runs.length === 0) {
     lines.push("*No runs recorded yet.*");
     lines.push("");
+    lines.push(formatTelemetryMarkdownSection(telemetry.completed, telemetry.partial));
     return lines.join("\n");
   }
 
@@ -205,6 +324,7 @@ function buildSessionMarkdownDoc(runs: RunSummary[], sessionIdFallback: string):
     lines.push("");
   }
 
+  lines.push(formatTelemetryMarkdownSection(telemetry.completed, telemetry.partial));
   return lines.join("\n");
 }
 
@@ -323,8 +443,15 @@ function wrapCoordinate(value: number): number {
   return value;
 }
 
-function spawnParticle(x: number, y: number, type: ArchetypeKey): Particle {
+function applyArchetypeType(particle: Particle, newType: ArchetypeKey): void {
+  particle.type = newType;
+  particle.archetype = ARCHETYPES[newType];
+  particle.radius = ARCHETYPES[newType].size;
+}
+
+function spawnParticle(x: number, y: number, type: ArchetypeKey, birthReason = "spawn"): Particle {
   const archetype = ARCHETYPES[type];
+  const love = type === "AMOR" ? 85 : Math.random() * 35;
   return {
     id: nextParticleId++,
     x,
@@ -333,14 +460,16 @@ function spawnParticle(x: number, y: number, type: ArchetypeKey): Particle {
     vy: (Math.random() - 0.5) * 3.5,
     type,
     archetype,
-    love: type === "AMOR" ? 85 : Math.random() * 35,
+    love,
+    peakLove: love,
     chaos: type === "VOID" ? 68 + Math.random() * 22 : 20 + Math.random() * 40,
     order: type === "BLOOM" ? 62 + Math.random() * 24 : 22 + Math.random() * 42,
     energy: 45 + Math.random() * 40,
     radius: archetype.size,
     inactiveSteps: 0,
     bondId: null,
-    age: 0
+    age: 0,
+    birthReason
   };
 }
 
@@ -474,6 +603,16 @@ function App() {
   const nextCheckpointStepRef = useRef(CHECKPOINT_INTERVAL_STEPS);
   const markdownFileHandleRef = useRef<FileSystemFileHandle | null>(null);
   const markdownWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  /** Session-long sim steps for rolling telemetry (not reset on universe restart). */
+  const telemetryRef = useRef({
+    sessionSteps: 0,
+    nextWindowToClose: 0,
+    completed: [] as TelemetryWindowSnapshot[],
+    births: emptyArchetypeCountRecord(),
+    deaths: emptyArchetypeCountRecord(),
+    birthReasons: {} as Record<string, number>,
+    deathReasons: {} as Record<string, number>
+  });
   const runSummariesRef = useRef<Map<number, RunSummary>>(new Map());
   const autoRestartTimeoutRef = useRef<number | null>(null);
   const extinctionRecordedRef = useRef(false);
@@ -588,7 +727,19 @@ function App() {
 
   const flushSessionMarkdown = useCallback(() => {
     const runs = [...runSummariesRef.current.values()].sort((a, b) => a.runIndex - b.runIndex);
-    const content = buildSessionMarkdownDoc(runs, sessionIdRef.current);
+    const tr = telemetryRef.current;
+    const partial = {
+      windowIndex: tr.nextWindowToClose,
+      sessionSteps: tr.sessionSteps,
+      births: { ...tr.births },
+      deaths: { ...tr.deaths },
+      birthReasons: { ...tr.birthReasons },
+      deathReasons: { ...tr.deathReasons }
+    };
+    const content = buildSessionMarkdownDoc(runs, sessionIdRef.current, {
+      completed: [...tr.completed],
+      partial
+    });
     const handle = markdownFileHandleRef.current;
     if (!handle) {
       return;
@@ -803,6 +954,15 @@ function App() {
   const openSessionMarkdown = useCallback(async (mode: SessionMode) => {
     sessionIdRef.current = `${mode}-${new Date().toISOString().replace(/:/g, "-")}`;
     runSummariesRef.current.clear();
+    telemetryRef.current = {
+      sessionSteps: 0,
+      nextWindowToClose: 0,
+      completed: [],
+      births: emptyArchetypeCountRecord(),
+      deaths: emptyArchetypeCountRecord(),
+      birthReasons: {},
+      deathReasons: {}
+    };
     markdownFileHandleRef.current = null;
     markdownWriteChainRef.current = Promise.resolve();
     try {
@@ -1211,6 +1371,7 @@ function App() {
 
           const particlesToRemove = particlesToRemoveRef.current;
           particlesToRemove.clear();
+          const particlesToDeathReason = new Map<number, string>();
           const particlesToSpawn = particlesToSpawnRef.current;
           particlesToSpawn.length = 0;
           const idToIndex = idToIndexRef.current;
@@ -1280,7 +1441,10 @@ function App() {
                     dist < 18 &&
                     Math.random() < 0.0038 * stepScale
                   ) {
-                    particlesToRemove.add(other.id);
+                    if (!particlesToRemove.has(other.id)) {
+                      particlesToRemove.add(other.id);
+                      particlesToDeathReason.set(other.id, "void_absorb");
+                    }
                     particle.energy = clampStat(particle.energy + 6);
                     particle.chaos = clampStat(particle.chaos + 2);
                   }
@@ -1304,11 +1468,22 @@ function App() {
                     particle.love > 74 &&
                     Math.random() < 0.0018 * stepScale
                   ) {
-                    particle.type = "BLOOM";
-                    particle.archetype = ARCHETYPES.BLOOM;
-                    particle.radius = ARCHETYPES.BLOOM.size;
+                    applyArchetypeType(particle, "BLOOM");
                     particle.chaos = clampStat(particle.chaos - 30);
                     particle.order = clampStat(particle.order + 24);
+                  }
+
+                  if (
+                    !inExplosionPhase &&
+                    particle.type === "BLOOM" &&
+                    other.type === "VOID" &&
+                    dist < 22 &&
+                    particle.order < 36 &&
+                    Math.random() < 0.001 * stepScale
+                  ) {
+                    applyArchetypeType(particle, "VOID");
+                    particle.chaos = clampStat(particle.chaos + 18);
+                    particle.order = clampStat(particle.order - 10);
                   }
 
                   if (
@@ -1367,6 +1542,22 @@ function App() {
                     particle.energy = clampStat(particle.energy + (Math.random() - 0.5) * 8);
                   }
 
+                  if (
+                    !inExplosionPhase &&
+                    particle.type !== "AMOR" &&
+                    Math.random() < 0.0001 * stepScale * influence * (0.4 + residual.chaos / 100)
+                  ) {
+                    const cycle: ArchetypeKey[] = ["PULSE", "BLOOM", "ECHO", "VOID"];
+                    const from = cycle.indexOf(particle.type);
+                    if (from >= 0) {
+                      const hop = 1 + Math.floor(Math.random() * (cycle.length - 1));
+                      const nextType = cycle[(from + hop) % cycle.length];
+                      if (nextType !== particle.type) {
+                        applyArchetypeType(particle, nextType);
+                      }
+                    }
+                  }
+
                   if (!inExplosionPhase && Math.random() < (residual.energy / 1600) * influence) {
                     particle.vx += dirX * 0.07;
                     particle.vy += dirY * 0.07;
@@ -1387,6 +1578,8 @@ function App() {
               particle.love = Math.max(0, particle.love - 0.25);
               particle.energy = Math.max(0, particle.energy - 0.1);
             }
+
+            particle.peakLove = Math.max(particle.peakLove, particle.love);
 
             residualAccumulatorRef.current += stepScale;
             if (residualAccumulatorRef.current >= RESIDUAL_EMIT_INTERVAL) {
@@ -1437,81 +1630,141 @@ function App() {
                 particle.inactiveSteps = Math.max(0, particle.inactiveSteps - stepScale * 0.6);
               }
 
-              if (particle.type !== "AMOR" && particle.love <= 1 && Math.random() < 0.0018 * stepScale * deathBias) {
-                particlesToRemove.add(particle.id);
+              const voidNeighbors = nearbyCount(nearbyTypeCounts, i, "VOID");
+              const loveDrain =
+                particle.love <= 1 ? 1.65 : particle.love < 22 ? 1.22 : 1 + (100 - particle.love) * 0.0035;
+              let ecologyMult = 1;
+              if (particle.type === "PULSE") {
+                ecologyMult *= 1 + (particle.inactiveSteps > 80 ? 0.38 : 0);
+              } else if (particle.type === "BLOOM") {
+                ecologyMult *= 1 + Math.min(0.55, voidNeighbors * 0.14);
+              } else if (particle.type === "ECHO") {
+                ecologyMult *= 1 + Math.max(0, (particle.chaos - 52) * 0.01);
+              } else if (particle.type === "VOID") {
+                ecologyMult *= 1.05;
               }
 
-            if (particle.type === "PULSE" && particle.inactiveSteps > 80 && Math.random() < 0.03 * stepScale * deathBias) {
-              particlesToRemove.add(particle.id);
-            }
-            if (particle.type === "BLOOM" && nearbyCount(nearbyTypeCounts, i, "VOID") >= 3) {
-              if (Math.random() < 0.0036 * stepScale * deathBias) {
+              if (
+                particle.type !== "AMOR" &&
+                !particlesToRemove.has(particle.id) &&
+                Math.random() < Math.min(0.055, 0.0019 * stepScale * deathBias * loveDrain * ecologyMult)
+              ) {
                 particlesToRemove.add(particle.id);
+                particlesToDeathReason.set(particle.id, "ecology_unified");
               }
-            }
-            if (particle.type === "ECHO" && particle.chaos > 85) {
-              if (Math.random() < 0.0036 * stepScale * deathBias) {
-                particlesToRemove.add(particle.id);
-              }
-            }
-            if (particle.type === "VOID" && Math.random() < 0.0019 * stepScale * deathBias) {
-              particlesToRemove.add(particle.id);
-            }
-            if (particle.type === "AMOR" && nearbyCount(nearbyTypeCounts, i, "VOID") >= 2 && Math.random() < 0.0017 * stepScale * deathBias) {
-              const saveTarget = particles.find((candidate) => candidate.type !== "AMOR" && !particlesToRemove.has(candidate.id));
-              if (saveTarget) {
-                saveTarget.love = clampStat(saveTarget.love + 45);
-                saveTarget.energy = clampStat(saveTarget.energy + 28);
-                // Amor sacrifices strength, not existence.
-                particle.love = clampStat(particle.love - 35);
-                particle.energy = clampStat(particle.energy - 25);
-                particle.order = clampStat(particle.order + 5);
-              }
-            }
 
-            if (particle.type === "PULSE" && nearbyCount(nearbyTypeCounts, i, "BLOOM") >= 1) {
-              if (Math.random() < 0.0015 * stepScale * birthScale * rarityMultiplier("PULSE")) {
-                particlesToSpawn.push(spawnParticle(particle.x + (Math.random() - 0.5) * 30, particle.y + (Math.random() - 0.5) * 30, "PULSE"));
-              }
-            }
-            if (particle.type === "BLOOM" && nearbyCount(nearbyTypeCounts, i, "ECHO") >= 1) {
-              if (Math.random() < 0.0017 * stepScale * birthScale * rarityMultiplier("BLOOM")) {
-                particlesToSpawn.push(spawnParticle(particle.x + (Math.random() - 0.5) * 24, particle.y + (Math.random() - 0.5) * 24, "BLOOM"));
-                if (Math.random() < 0.45) {
-                  particlesToSpawn.push(spawnParticle(particle.x + (Math.random() - 0.5) * 24, particle.y + (Math.random() - 0.5) * 24, "BLOOM"));
+              if (particle.type === "AMOR" && nearbyCount(nearbyTypeCounts, i, "VOID") >= 2 && Math.random() < 0.0017 * stepScale * deathBias) {
+                const saveTarget = particles.find((candidate) => candidate.type !== "AMOR" && !particlesToRemove.has(candidate.id));
+                if (saveTarget) {
+                  saveTarget.love = clampStat(saveTarget.love + 45);
+                  saveTarget.energy = clampStat(saveTarget.energy + 28);
+                  // Amor sacrifices strength, not existence.
+                  particle.love = clampStat(particle.love - 35);
+                  particle.energy = clampStat(particle.energy - 25);
+                  particle.order = clampStat(particle.order + 5);
                 }
               }
-            }
-            if (particle.type === "ECHO" && nearbyCount(nearbyTypeCounts, i, "ECHO") >= 2) {
-              if (Math.random() < 0.0015 * stepScale * birthScale * rarityMultiplier("ECHO")) {
-                const echo = spawnParticle(particle.x + (Math.random() - 0.5) * 20, particle.y + (Math.random() - 0.5) * 20, "ECHO");
-                echo.order = clampStat(echo.order + 18);
-                echo.chaos = clampStat(echo.chaos - 14);
-                particlesToSpawn.push(echo);
+
+              const birthRate = BIRTH_RATE_BASE * stepScale * birthScale;
+
+              if (particle.type === "PULSE" && nearbyCount(nearbyTypeCounts, i, "BLOOM") >= 1) {
+                if (Math.random() < birthRate * rarityMultiplier("PULSE")) {
+                  particlesToSpawn.push(
+                    spawnParticle(
+                      particle.x + (Math.random() - 0.5) * 30,
+                      particle.y + (Math.random() - 0.5) * 30,
+                      "PULSE",
+                      "birth_pulse_near_bloom"
+                    )
+                  );
+                }
               }
-            }
-            if (particle.type === "VOID" && nearbyCount(nearbyTypeCounts, i, "PULSE") >= 2) {
-              if (Math.random() < 0.0015 * stepScale * birthScale * rarityMultiplier("VOID")) {
-                const v = spawnParticle(particle.x + (Math.random() - 0.5) * 24, particle.y + (Math.random() - 0.5) * 24, "VOID");
-                v.chaos = clampStat(v.chaos + 14);
-                particlesToSpawn.push(v);
+              if (particle.type === "BLOOM" && nearbyCount(nearbyTypeCounts, i, "ECHO") >= 1) {
+                if (Math.random() < birthRate * rarityMultiplier("BLOOM")) {
+                  particlesToSpawn.push(
+                    spawnParticle(
+                      particle.x + (Math.random() - 0.5) * 24,
+                      particle.y + (Math.random() - 0.5) * 24,
+                      "BLOOM",
+                      "birth_bloom_near_echo"
+                    )
+                  );
+                  if (Math.random() < BLOOM_DOUBLE_SPAWN_CHANCE) {
+                    particlesToSpawn.push(
+                      spawnParticle(
+                        particle.x + (Math.random() - 0.5) * 24,
+                        particle.y + (Math.random() - 0.5) * 24,
+                        "BLOOM",
+                        "birth_bloom_double"
+                      )
+                    );
+                  }
+                }
               }
-            }
-            if (particle.type === "AMOR" && particle.love > 85) {
-              const compatible =
-                nearbyCount(nearbyTypeCounts, i, "BLOOM") +
-                nearbyCount(nearbyTypeCounts, i, "ECHO") +
-                nearbyCount(nearbyTypeCounts, i, "PULSE");
-              if (compatible >= 1 && Math.random() < 0.0014 * stepScale * birthScale * rarityMultiplier("AMOR")) {
-                const typeRoll = Math.random();
-                const newType: ArchetypeKey = typeRoll < 0.34 ? "BLOOM" : typeRoll < 0.68 ? "ECHO" : "PULSE";
-                const born = spawnParticle(particle.x + (Math.random() - 0.5) * 18, particle.y + (Math.random() - 0.5) * 18, newType);
-                born.love = clampStat(born.love + 35);
-                born.order = clampStat(born.order + 16);
-                born.energy = clampStat(born.energy + 12);
-                particlesToSpawn.push(born);
+              if (particle.type === "ECHO" && nearbyCount(nearbyTypeCounts, i, "ECHO") >= 2) {
+                if (Math.random() < birthRate * rarityMultiplier("ECHO")) {
+                  const echo = spawnParticle(
+                    particle.x + (Math.random() - 0.5) * 20,
+                    particle.y + (Math.random() - 0.5) * 20,
+                    "ECHO",
+                    "birth_echo_pair"
+                  );
+                  echo.order = clampStat(echo.order + 18);
+                  echo.chaos = clampStat(echo.chaos - 14);
+                  particlesToSpawn.push(echo);
+                }
               }
-            }
+              if (particle.type === "VOID" && nearbyCount(nearbyTypeCounts, i, "PULSE") >= 2) {
+                if (Math.random() < birthRate * rarityMultiplier("VOID")) {
+                  const v = spawnParticle(
+                    particle.x + (Math.random() - 0.5) * 24,
+                    particle.y + (Math.random() - 0.5) * 24,
+                    "VOID",
+                    "birth_void_near_pulse"
+                  );
+                  v.chaos = clampStat(v.chaos + 14);
+                  particlesToSpawn.push(v);
+                }
+              }
+              if (particle.type === "AMOR" && particle.love > 85) {
+                const compatible =
+                  nearbyCount(nearbyTypeCounts, i, "BLOOM") +
+                  nearbyCount(nearbyTypeCounts, i, "ECHO") +
+                  nearbyCount(nearbyTypeCounts, i, "PULSE");
+                if (compatible >= 1 && Math.random() < birthRate * rarityMultiplier("AMOR")) {
+                  const typeRoll = Math.random();
+                  const newType: ArchetypeKey =
+                    typeRoll < 0.26 ? "BLOOM" : typeRoll < 0.52 ? "ECHO" : typeRoll < 0.78 ? "PULSE" : "VOID";
+                  const born = spawnParticle(
+                    particle.x + (Math.random() - 0.5) * 18,
+                    particle.y + (Math.random() - 0.5) * 18,
+                    newType,
+                    "birth_amor_gift"
+                  );
+                  born.love = clampStat(born.love + 35);
+                  born.peakLove = Math.max(born.peakLove, born.love);
+                  born.order = clampStat(born.order + 16);
+                  born.energy = clampStat(born.energy + 12);
+                  particlesToSpawn.push(born);
+                }
+              }
+
+              if (
+                particle.type !== "AMOR" &&
+                particle.type !== "VOID" &&
+                nearbyCount(nearbyTypeCounts, i, "AMOR") >= 1 &&
+                voidNeighbors === 0 &&
+                Math.random() < 0.00085 * stepScale * birthScale
+              ) {
+                particlesToSpawn.push(
+                  spawnParticle(
+                    particle.x + (Math.random() - 0.5) * 20,
+                    particle.y + (Math.random() - 0.5) * 20,
+                    "VOID",
+                    "birth_void_amor_spark"
+                  )
+                );
+              }
 
               if (particle.bondId !== null) {
                 const bondIndex = idToIndex.get(particle.bondId);
@@ -1528,24 +1781,91 @@ function App() {
               const amorRemoved = amorCandidates.filter((particle) => particlesToRemove.has(particle.id)).length;
               if (amorRemoved >= amorCandidates.length) {
                 // Preserve at least one Amor particle as the fundamental connective force.
-                particlesToRemove.delete(amorCandidates[0].id);
+                const keepId = amorCandidates[0].id;
+                particlesToRemove.delete(keepId);
+                particlesToDeathReason.delete(keepId);
               }
             }
+
+            const trDeath = telemetryRef.current;
+            const voidFromExtinguished: Particle[] = [];
+            for (const id of particlesToRemove) {
+              const victim = particles.find((p) => p.id === id);
+              if (
+                victim &&
+                victim.type !== "VOID" &&
+                victim.type !== "AMOR" &&
+                victim.peakLove >= PEAK_LOVE_VOID_EXTINGUISH_THRESHOLD &&
+                victim.love <= 1
+              ) {
+                voidFromExtinguished.push(
+                  spawnParticle(
+                    victim.x + (Math.random() - 0.5) * 14,
+                    victim.y + (Math.random() - 0.5) * 14,
+                    "VOID",
+                    "birth_void_extinguished_love"
+                  )
+                );
+              }
+            }
+
             for (let i = particles.length - 1; i >= 0; i -= 1) {
               if (particlesToRemove.has(particles[i].id)) {
+                const gone = particles[i];
+                trDeath.deaths[gone.type] += 1;
+                const reason = particlesToDeathReason.get(gone.id) ?? "unknown";
+                trDeath.deathReasons[reason] = (trDeath.deathReasons[reason] ?? 0) + 1;
                 particles.splice(i, 1);
               }
+            }
+
+            const maxP = currentConfigRef.current.maxParticles;
+            for (let v = 0; v < voidFromExtinguished.length && particles.length < maxP; v += 1) {
+              const born = voidFromExtinguished[v];
+              trDeath.births.VOID += 1;
+              const br = born.birthReason ?? "birth_void_extinguished_love";
+              trDeath.birthReasons[br] = (trDeath.birthReasons[br] ?? 0) + 1;
+              delete born.birthReason;
+              particles.push(born);
             }
           }
 
           if (particlesToSpawn.length > 0 && particles.length < currentConfigRef.current.maxParticles) {
             const room = Math.max(0, currentConfigRef.current.maxParticles - particles.length);
+            const trBirth = telemetryRef.current;
             for (let i = 0; i < Math.min(room, particlesToSpawn.length); i += 1) {
-              particles.push(particlesToSpawn[i]);
+              const born = particlesToSpawn[i];
+              trBirth.births[born.type] += 1;
+              const br = born.birthReason ?? "birth_unknown";
+              trBirth.birthReasons[br] = (trBirth.birthReasons[br] ?? 0) + 1;
+              delete born.birthReason;
+              particles.push(born);
             }
           }
 
           simulationStepsRef.current += stepScale;
+          const trStep = telemetryRef.current;
+          trStep.sessionSteps += stepScale;
+          while (Math.floor(trStep.sessionSteps / TELEMETRY_WINDOW_STEPS) > trStep.nextWindowToClose) {
+            const w = trStep.nextWindowToClose;
+            trStep.completed.push({
+              windowIndex: w,
+              startSimStep: w * TELEMETRY_WINDOW_STEPS,
+              endSimStep: (w + 1) * TELEMETRY_WINDOW_STEPS,
+              births: { ...trStep.births },
+              deaths: { ...trStep.deaths },
+              birthReasons: { ...trStep.birthReasons },
+              deathReasons: { ...trStep.deathReasons }
+            });
+            if (trStep.completed.length > TELEMETRY_MAX_COMPLETED_WINDOWS) {
+              trStep.completed.shift();
+            }
+            trStep.births = emptyArchetypeCountRecord();
+            trStep.deaths = emptyArchetypeCountRecord();
+            trStep.birthReasons = {};
+            trStep.deathReasons = {};
+            trStep.nextWindowToClose += 1;
+          }
           const overlapInterval = adaptivePerformance
             ? particles.length > 2400
               ? 4
@@ -2280,7 +2600,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.16</strong>
+            <strong>Universe Game v1.3.17</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>

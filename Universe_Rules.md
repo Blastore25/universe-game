@@ -1,6 +1,6 @@
 # Universe Game - Fundamental Rules (Current Implementation)
 
-**Version:** `v1.3.16`
+**Version:** `v1.3.17`
 
 This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 
@@ -61,10 +61,13 @@ Default starting counts (editable at session start):
 
 Rules are probabilistic and proximity-based (not deterministic cellular automata):
 
-- Archetype-specific birth conditions (Pulse/Bloom/Echo/Void/Amor variants).
-- Chaos/energy mutation pressure via residual influence.
-- Death pathways include inactivity, chaos overload, void pressure, low-love decay, and sacrifice logic.
-- Void-to-Bloom transformation can occur under high-love conditions.
+- **Birth gates** are unchanged (Pulse near Bloom, Bloom near Echo, Echo pairs, Void near Pulses, high-love Amor gifts), but **shared birth rate scaling** (`BIRTH_RATE_BASE`) normalizes coefficients across types; **diversity / rarity** multipliers still apply.
+- **Bloom** may still double-spawn a second Bloom at a **lower** fixed chance than before.
+- **Death (non-Amor):** one **ecology** roll per substep combines low-love pressure with archetype context (Pulse inactivity, Bloom near Void, Echo chaos, mild Void baseline) so overall odds stay in a similar band; **Void contact absorb** and **Amor sacrifice** remain separate.
+- Each particle tracks **peak love** over its life. When a **non-Void, non-Amor** particle **dies** with love at or near zero and its peak love was **high** (extinguished connection), a **Void** may spawn at that site.
+- **Void ↔ Bloom:** Void can still flip to Bloom under high-love Bloom proximity; Bloom can rarely flip to Void when very near Void with low order (symmetric, low rate).
+- **Residual-driven mutation:** under residual influence, non-Amor particles can rarely hop along the Pulse–Bloom–Echo–Void cycle.
+- **Void spark:** a non-Amor particle with **no** Void neighbors but **with** nearby Amor can rarely seed a new Void (companion rule for Void supply).
 
 ## Stable universe (concept) vs Static Universe (detected)
 
@@ -106,7 +109,7 @@ HUD includes:
 - sim timer (scales with Time control) and extinction / static-universe timestamps when triggered
 - phase state and residual count
 - workload indicators (substeps/frame and interaction checks/s)
-- session export status (Markdown session log)
+- session export status (Markdown session log, including rolling-window ecology telemetry when saved)
 
 During setup, an optional **Setup Debug Console** (off by default) logs input/change events and captures `window.error` / `unhandledrejection` so startup issues can be diagnosed from the UI. Log lines are batched to the next animation frame so typing stays responsive.
 
@@ -115,6 +118,12 @@ During setup, an optional **Setup Debug Console** (off by default) logs input/ch
 When the browser supports the File System Access API, session start opens **one** save dialog for a **`.md`** session log. If you cancel or the API is unavailable, run summaries still accumulate in memory for the session, but nothing is written to disk.
 
 **Update cadence:** whenever run summaries are flushed, the Markdown file is **rewritten in full** from the current in-memory summaries (small files, keeps implementation simple and avoids RAM growth).
+
+### Rolling-window ecology telemetry
+
+- Session-long **simulation step** counter (not reset when the universe restarts inside a session) advances in fixed **windows** (300 session steps per row, about five sim seconds at the default step clock).
+- Each completed window records **births and deaths per archetype** plus **reason labels** (for example `ecology_unified`, `void_absorb`, `birth_void_extinguished_love`, `birth_amor_gift`).
+- The log appends a **## Session telemetry** section after run summaries: completed windows as a table, the **in-progress** partial window, and a reason breakdown table.
 
 ### Run summaries in the log
 
