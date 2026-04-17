@@ -1,6 +1,6 @@
 # Universe Game - Fundamental Rules (Current Implementation)
 
-**Version:** `v1.3.19`
+**Version:** `v1.3.20`
 
 This file describes the current in-app behavior and tunable rule system used by the simulation runtime.
 
@@ -27,7 +27,7 @@ Default starting counts (editable at session start):
 ## Session Modes
 
 - **Individual session:** one configured universe at a time (manual reset available).
-- **Auto mode:** at session start the app builds a **full shuffled list** of run parameter sets for the requested run count. Each **unique** fingerprint appears **3–5** times when the math allows (`N` between `⌈N/5⌉` and `⌊N/3⌋` unique sets); configs are drawn from the usual random ranges but pass a **mild** filter (population headroom, archetype floors, bounded death/rarity tuning). Runs still advance on **extinction** or **Static Universe** using the next entry in that list. The Markdown log includes a **pre-generated schedule** summary table plus per-run parameters in each run section.
+- **Auto mode:** at session start the app builds a **full shuffled list** of run parameter sets for the requested run count. You set **min** and **max repeats per fingerprint** (defaults 3 and 5; clamped 1–500). Each **unique** fingerprint gets a stable **parameter set ID** (1-based) and appears that many times when the math allows (`N` between `⌈N/max⌉` and `⌊N/min⌋` unique sets); impossible combinations fall back to capping repeats at **max** per fingerprint. Configs are drawn from the usual random ranges but pass a **mild** filter (population headroom, archetype floors, bounded death/rarity tuning). Runs advance on **extinction** or **Static Universe** using the next entry in that list. The Markdown log includes a **pre-generated schedule** summary (IDs, fingerprint prefixes, repeat counts) plus per-run **Parameter set ID**, fingerprint prefix, and full parameters.
 - **Strict setup-first flow:** while setup is open, simulation canvas/loop/input listeners are not mounted; the universe starts only after explicit `Start`.
 - **Big Bang Reset (HUD):** pauses the sim, asks for confirmation, then **writes the session Markdown log** (if a file was chosen at session start), clears that file handle and in-memory session data, and returns to the setup screen with defaults so the next **Start** behaves like a new session (including a new save dialog).
 
@@ -130,7 +130,7 @@ When the browser supports the File System Access API, session start opens **one*
 
 - **Individual mode:** one **## Run N** section for the current universe run, updated at checkpoints / extinction / static universe.
 - **Auto mode:** one **## Run N** section per tested universe run, each updated through that run lifecycle.
-- **Status** in the metrics table is `ongoing`, `extinct`, or `static`, with extinction and static sim times when applicable, plus tunable parameters and telemetry fields in tables.
+- **Status** in the metrics table is `ongoing`, `extinct`, or `static`, with extinction and static sim times when applicable, plus tunable parameters and telemetry fields in tables. **Auto mode** adds **Parameter set ID** and **Fingerprint (prefix)** to each run’s metrics table.
 - **Brief history** lines capture checkpoint-style population/residual peaks; skim metrics tables for structured values.
 
 ---

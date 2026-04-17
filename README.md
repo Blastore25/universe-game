@@ -5,6 +5,7 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 
 ## Version
 
+- `v1.3.20` - **Auto mode** schedule: configurable **min/max repeats per fingerprint**, stable **parameter set IDs** and fingerprint prefixes in session Markdown (per run + schedule table).
 - `v1.3.19` - **Auto mode** pre-builds a shuffled **parameter schedule** (each unique config **3–5×** when feasible, mild random filters); advances use the list; schedule is saved in session Markdown.
 - `v1.3.18` - **Big Bang Reset** pauses, confirms, **flushes session `.md`**, then returns to **setup** (fresh defaults, new save prompt on next Start).
 - `v1.3.17` - Balanced **ecology** (unified non-Amor death, normalized birth rates, Void replenishment rules), **Void↔Bloom** symmetry, **residual mutation**, rolling-window **telemetry** embedded in the session Markdown log.
@@ -30,6 +31,11 @@ The simulation runs in a React + TypeScript app powered by Vite and is ready for
 - `v1.1.0` - Converted from a single-file app to a production-ready Vite + React + TypeScript project.
 
 ## Changelog
+
+### `v1.3.20`
+
+- Auto setup: **Min repeats per fingerprint** and **Max repeats per fingerprint** (defaults 3 and 5; parsed 1–500, swapped if reversed).
+- Each auto run gets a **Parameter set ID** (1-based, stable for the session) and a **fingerprint prefix** row in the Markdown run table; the schedule section lists IDs, run counts, and fingerprint prefixes per unique set.
 
 ### `v1.3.19`
 

@@ -225,6 +225,8 @@ interface RunSummary {
   sessionId: string;
   mode: SessionMode;
   runIndex: number;
+  /** Auto mode: stable ID into the pre-generated schedule table (1-based). */
+  parameterSetId: number | null;
   status: "ongoing" | "extinct" | "static";
   simSeconds: number;
   extinctionSeconds: number | null;
@@ -238,6 +240,28 @@ interface RunSummary {
   checkpointCount: number;
   historyBrief: string;
   config: SessionConfig;
+}
+
+interface AutoScheduleUniqueRow {
+  id: number;
+  fingerprint: string;
+  config: SessionConfig;
+  count: number;
+}
+
+interface AutoScheduleExport {
+  uniqueSets: AutoScheduleUniqueRow[];
+  totalRuns: number;
+  minRepeat: number;
+  maxRepeat: number;
+}
+
+interface AutoScheduleBundle {
+  schedule: SessionConfig[];
+  parameterSetIdPerRun: number[];
+  uniqueSets: AutoScheduleUniqueRow[];
+  minRepeat: number;
+  maxRepeat: number;
 }
 
 /** Human-readable session document from `runSummariesRef`; rewritten in full on each flush. */
@@ -255,7 +279,7 @@ function buildSessionMarkdownDoc(
       deathReasons: Record<string, number>;
     } | null;
   },
-  autoRunSchedule: SessionConfig[] | null
+  autoScheduleExport: AutoScheduleExport | null
 ): string {
   const lines: string[] = [];
   const sid = runs.length > 0 ? runs[0].sessionId : sessionIdFallback;
@@ -269,12 +293,17 @@ function buildSessionMarkdownDoc(
   lines.push(`| **Session ID** | \`${sid}\` |`);
   lines.push(`| **Runs in this file** | ${runs.length} |`);
   lines.push(`| **Last updated (wall clock)** | ${new Date().toISOString()} |`);
+  if (autoScheduleExport && autoScheduleExport.totalRuns > 0) {
+    lines.push(
+      `| **Auto schedule** | ${autoScheduleExport.totalRuns} runs, **${autoScheduleExport.minRepeat}–${autoScheduleExport.maxRepeat}** repeats per fingerprint (when feasible) |`
+    );
+  }
   lines.push("");
   lines.push("---");
   lines.push("");
 
-  if (autoRunSchedule && autoRunSchedule.length > 0) {
-    lines.push(formatAutoScheduleMarkdown(autoRunSchedule));
+  if (autoScheduleExport && autoScheduleExport.uniqueSets.length > 0) {
+    lines.push(formatAutoScheduleMarkdown(autoScheduleExport));
     lines.push("---");
     lines.push("");
   }
@@ -294,6 +323,12 @@ function buildSessionMarkdownDoc(
     lines.push("| Field | Value |");
     lines.push("|:---|:---|");
     lines.push(`| **Status** | \`${run.status}\` |`);
+    if (run.parameterSetId != null) {
+      lines.push(`| **Parameter set ID** | \`${run.parameterSetId}\` |`);
+      const fpFull = sessionConfigFingerprint(run.config);
+      const fpDisplay = fpFull.length > 56 ? `${fpFull.slice(0, 56)}…` : fpFull;
+      lines.push(`| **Fingerprint (prefix)** | \`${fpDisplay.replace(/`/g, "'")}\` |`);
+    }
     lines.push(`| Sim time (s) | ${run.simSeconds.toFixed(3)} |`);
     lines.push(`| Extinction at (sim s) | ${run.extinctionSeconds === null ? "—" : run.extinctionSeconds.toFixed(3)} |`);
     lines.push(`| Static universe at (sim s) | ${run.staticSimSeconds === null ? "—" : run.staticSimSeconds.toFixed(3)} |`);
@@ -350,6 +385,10 @@ interface SetupDraft {
   loveDeathProtection: string;
   adaptivePerformanceMode: boolean;
   autoRunTarget: string;
+  /** Auto mode: min times each fingerprint appears in the pre-built list (when feasible). */
+  autoScheduleMinRepeat: string;
+  /** Auto mode: max times each fingerprint appears. */
+  autoScheduleMaxRepeat: string;
 }
 
 const DEFAULT_SESSION_CONFIG: SessionConfig = {
@@ -389,13 +428,15 @@ function createSetupDraft(config: SessionConfig, autoRunTarget: number): SetupDr
     diversityFloor: String(config.diversityFloor),
     loveDeathProtection: String(config.loveDeathProtection),
     adaptivePerformanceMode: config.adaptivePerformanceMode,
-    autoRunTarget: String(autoRunTarget)
+    autoRunTarget: String(autoRunTarget),
+    autoScheduleMinRepeat: "3",
+    autoScheduleMaxRepeat: "5"
   };
 }
 
-/** Per unique auto config: at least this many runs, at most that many (when schedule math allows). */
-const AUTO_SCHEDULE_MIN_REPEAT = 3;
-const AUTO_SCHEDULE_MAX_REPEAT = 5;
+/** Defaults when parsing auto repeat fields from setup. */
+const DEFAULT_AUTO_SCHEDULE_MIN_REPEAT = 3;
+const DEFAULT_AUTO_SCHEDULE_MAX_REPEAT = 5;
 
 function randomSessionConfig(): SessionConfig {
   const randInt = (min: number, max: number) => Math.floor(min + Math.random() * (max - min + 1));
@@ -482,42 +523,105 @@ function shuffleArray<T>(items: T[]): void {
   }
 }
 
-/**
- * Build `n` run configs for auto mode: pick K unique mild fingerprints, each used 3–5 times (when feasible),
- * then shuffle run order. Small `n` uses a relaxed cap (no more than 5 identical fingerprints).
- */
-function buildAutoRunSchedule(n: number): SessionConfig[] {
-  if (n <= 0) {
-    return [];
+function summarizeUniqueFromPairs(pairs: { config: SessionConfig; id: number }[]): AutoScheduleUniqueRow[] {
+  const byId = new Map<number, { config: SessionConfig; fingerprint: string; count: number }>();
+  for (const p of pairs) {
+    const fp = sessionConfigFingerprint(p.config);
+    const g = byId.get(p.id);
+    if (g) {
+      g.count += 1;
+    } else {
+      byId.set(p.id, { config: cloneSessionConfig(p.config), fingerprint: fp, count: 1 });
+    }
   }
-  const minK = Math.ceil(n / AUTO_SCHEDULE_MAX_REPEAT);
-  const maxK = Math.floor(n / AUTO_SCHEDULE_MIN_REPEAT);
+  return [...byId.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([id, v]) => ({
+      id,
+      fingerprint: v.fingerprint,
+      config: v.config,
+      count: v.count
+    }));
+}
+
+function shuffleSchedulePairs(pairs: { config: SessionConfig; id: number }[]): void {
+  for (let i = pairs.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = pairs[i]!;
+    pairs[i] = pairs[j]!;
+    pairs[j] = t;
+  }
+}
+
+/**
+ * Build `n` auto run configs: K unique mild fingerprints, each used `minRepeat`–`maxRepeat` times when feasible,
+ * assign stable **parameter set IDs** (1..K), shuffle run order. Small `n` uses relaxed cap `maxRepeat` per fingerprint.
+ */
+function buildAutoRunSchedule(n: number, minRepeat: number, maxRepeat: number): AutoScheduleBundle {
+  const minR = Math.min(minRepeat, maxRepeat);
+  const maxR = Math.max(minRepeat, maxRepeat);
+  const empty = (): AutoScheduleBundle => ({
+    schedule: [],
+    parameterSetIdPerRun: [],
+    uniqueSets: [],
+    minRepeat: minR,
+    maxRepeat: maxR
+  });
+  if (n <= 0) {
+    return empty();
+  }
+
+  const minK = Math.ceil(n / maxR);
+  const maxK = Math.floor(n / minR);
 
   if (minK > maxK) {
-    const out: SessionConfig[] = [];
+    const pairs: { config: SessionConfig; id: number }[] = [];
+    const fpToId = new Map<string, number>();
+    let nextId = 1;
     const fpCounts = new Map<string, number>();
     let guard = 0;
-    while (out.length < n && guard < n * 400) {
+    while (pairs.length < n && guard < n * 500) {
       guard += 1;
       const c = randomSessionConfig();
       if (!isMildAutoConfig(c)) {
         continue;
       }
       const fp = sessionConfigFingerprint(c);
-      if ((fpCounts.get(fp) ?? 0) >= AUTO_SCHEDULE_MAX_REPEAT) {
+      if ((fpCounts.get(fp) ?? 0) >= maxR) {
         continue;
       }
-      out.push(cloneSessionConfig(c));
+      let id = fpToId.get(fp);
+      if (id === undefined) {
+        id = nextId;
+        nextId += 1;
+        fpToId.set(fp, id);
+      }
+      pairs.push({ config: cloneSessionConfig(c), id });
       fpCounts.set(fp, (fpCounts.get(fp) ?? 0) + 1);
     }
-    while (out.length < n) {
-      out.push(cloneSessionConfig(randomSessionConfig()));
+    while (pairs.length < n) {
+      const c = cloneSessionConfig(randomSessionConfig());
+      const fp = sessionConfigFingerprint(c);
+      let id = fpToId.get(fp);
+      if (id === undefined) {
+        id = nextId;
+        nextId += 1;
+        fpToId.set(fp, id);
+      }
+      pairs.push({ config: c, id });
     }
-    shuffleArray(out);
-    return out;
+    const uniqueSets = summarizeUniqueFromPairs(pairs);
+    shuffleSchedulePairs(pairs);
+    return {
+      schedule: pairs.map((p) => p.config),
+      parameterSetIdPerRun: pairs.map((p) => p.id),
+      uniqueSets,
+      minRepeat: minR,
+      maxRepeat: maxR
+    };
   }
 
-  let k = Math.round(n / 4);
+  let k = Math.round(n / ((minR + maxR) / 2));
   k = Math.max(minK, Math.min(maxK, k));
 
   const unique: SessionConfig[] = [];
@@ -542,64 +646,63 @@ function buildAutoRunSchedule(n: number): SessionConfig[] {
     unique.push(cloneSessionConfig(randomSessionConfig()));
   }
 
-  const repeats = new Array(k).fill(AUTO_SCHEDULE_MIN_REPEAT);
-  let remainder = n - AUTO_SCHEDULE_MIN_REPEAT * k;
+  const repeats = new Array(k).fill(minR);
+  let remainder = n - minR * k;
   let ri = 0;
-  while (remainder > 0 && ri < k * 20) {
+  while (remainder > 0 && ri < k * 30) {
     const idx = ri % k;
-    if (repeats[idx]! < AUTO_SCHEDULE_MAX_REPEAT) {
+    if (repeats[idx]! < maxR) {
       repeats[idx]! += 1;
       remainder -= 1;
     }
     ri += 1;
   }
 
-  const schedule: SessionConfig[] = [];
+  const pairs: { config: SessionConfig; id: number }[] = [];
   for (let i = 0; i < k; i += 1) {
+    const id = i + 1;
     for (let r = 0; r < repeats[i]!; r += 1) {
-      schedule.push(cloneSessionConfig(unique[i]!));
+      pairs.push({ config: cloneSessionConfig(unique[i]!), id });
     }
   }
-  while (schedule.length < n) {
-    schedule.push(cloneSessionConfig(unique[schedule.length % k]!));
+  while (pairs.length < n) {
+    const i = pairs.length % k;
+    pairs.push({ config: cloneSessionConfig(unique[i]!), id: i + 1 });
   }
-  while (schedule.length > n) {
-    schedule.pop();
+  while (pairs.length > n) {
+    pairs.pop();
   }
-  shuffleArray(schedule);
-  return schedule;
+  const uniqueSets = summarizeUniqueFromPairs(pairs);
+  shuffleSchedulePairs(pairs);
+  return {
+    schedule: pairs.map((p) => p.config),
+    parameterSetIdPerRun: pairs.map((p) => p.id),
+    uniqueSets,
+    minRepeat: minR,
+    maxRepeat: maxR
+  };
 }
 
-function formatAutoScheduleMarkdown(schedule: SessionConfig[]): string {
-  if (schedule.length === 0) {
+function formatAutoScheduleMarkdown(exp: AutoScheduleExport): string {
+  if (exp.uniqueSets.length === 0) {
     return "";
   }
   const lines: string[] = [];
   lines.push("## Auto mode — pre-generated parameter schedule");
   lines.push("");
   lines.push(
-    `**${schedule.length}** runs. Each unique parameter set is used **${AUTO_SCHEDULE_MIN_REPEAT}–${AUTO_SCHEDULE_MAX_REPEAT}** times when the run count allows; configs pass a **mild** filter (population headroom, archetype floors, bounded death/rarity tuning). Run order is **shuffled** — see each \`## Run n\` for the exact block used.`
+    `**${exp.totalRuns}** runs. Target **${exp.minRepeat}–${exp.maxRepeat}** uses per **parameter set ID** when the run count allows (otherwise a relaxed cap applies). Configs pass a **mild** filter. Run order is **shuffled** — each \`## Run n\` lists its **Parameter set ID** and full parameters.`
   );
   lines.push("");
-  const groups = new Map<string, { config: SessionConfig; count: number }>();
-  for (const c of schedule) {
-    const fp = sessionConfigFingerprint(c);
-    const g = groups.get(fp);
-    if (g) {
-      g.count += 1;
-    } else {
-      groups.set(fp, { config: cloneSessionConfig(c), count: 1 });
-    }
-  }
-  lines.push("### Unique configs (repeat counts in this session)");
+  lines.push("### Unique parameter sets");
   lines.push("");
-  lines.push("| ID | Runs | P | B | E | V | A | maxP | attr | repulse | AmorF | TTLn | TTLx | Lpop | deathSc | rare | div | loveP |");
-  lines.push("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|");
-  let id = 0;
-  for (const { config: c, count } of groups.values()) {
-    id += 1;
+  lines.push("| ID | Runs | Fingerprint (prefix) | P | B | E | V | A | maxP | attr | repulse | AmorF | TTLn | TTLx | Lpop | deathSc | rare | div | loveP |");
+  lines.push("|:---:|:---:|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|");
+  for (const row of exp.uniqueSets) {
+    const fpShort = row.fingerprint.length > 56 ? `${row.fingerprint.slice(0, 56)}…` : row.fingerprint;
+    const c = row.config;
     lines.push(
-      `| ${id} | ${count} | ${c.counts.PULSE} | ${c.counts.BLOOM} | ${c.counts.ECHO} | ${c.counts.VOID} | ${c.counts.AMOR} | ${c.maxParticles} | ${c.attractionScale.toFixed(2)} | ${c.sameTypeRepulsion.toFixed(3)} | ${c.amorPairForce.toFixed(2)} | ${c.influenceTtlBase} | ${c.influenceTtlExplosionBase} | ${c.lowPopulationThreshold} | ${c.lowPopulationDeathScale.toFixed(2)} | ${c.rarityBirthBoost.toFixed(2)} | ${c.diversityFloor} | ${c.loveDeathProtection.toFixed(2)} |`
+      `| ${row.id} | ${row.count} | \`${fpShort.replace(/`/g, "'")}\` | ${c.counts.PULSE} | ${c.counts.BLOOM} | ${c.counts.ECHO} | ${c.counts.VOID} | ${c.counts.AMOR} | ${c.maxParticles} | ${c.attractionScale.toFixed(2)} | ${c.sameTypeRepulsion.toFixed(3)} | ${c.amorPairForce.toFixed(2)} | ${c.influenceTtlBase} | ${c.influenceTtlExplosionBase} | ${c.lowPopulationThreshold} | ${c.lowPopulationDeathScale.toFixed(2)} | ${c.rarityBirthBoost.toFixed(2)} | ${c.diversityFloor} | ${c.loveDeathProtection.toFixed(2)} |`
     );
   }
   lines.push("");
@@ -835,6 +938,12 @@ function App() {
   });
   /** Auto mode only: full list of run configs (shuffled); run `k` uses `schedule[k - 1]`. */
   const autoRunScheduleRef = useRef<SessionConfig[]>([]);
+  /** Parallel to `autoRunScheduleRef`: parameter set ID (1-based) for each scheduled run. */
+  const autoRunParameterSetIdPerRunRef = useRef<number[]>([]);
+  /** Snapshot of unique sets (IDs + fingerprint + sample config + run count) for session Markdown. */
+  const autoRunUniqueSetsRef = useRef<AutoScheduleUniqueRow[]>([]);
+  const autoRunScheduleMinRepeatRef = useRef(3);
+  const autoRunScheduleMaxRepeatRef = useRef(5);
   const runSummariesRef = useRef<Map<number, RunSummary>>(new Map());
   const autoRestartTimeoutRef = useRef<number | null>(null);
   const extinctionRecordedRef = useRef(false);
@@ -958,9 +1067,19 @@ function App() {
       birthReasons: { ...tr.birthReasons },
       deathReasons: { ...tr.deathReasons }
     };
-    const autoScheduleSnap =
-      autoRunScheduleRef.current.length > 0
-        ? autoRunScheduleRef.current.map((c) => cloneSessionConfig(c))
+    const autoScheduleExport: AutoScheduleExport | null =
+      autoRunUniqueSetsRef.current.length > 0 && autoRunParameterSetIdPerRunRef.current.length > 0
+        ? {
+            uniqueSets: autoRunUniqueSetsRef.current.map((row) => ({
+              id: row.id,
+              fingerprint: row.fingerprint,
+              count: row.count,
+              config: cloneSessionConfig(row.config)
+            })),
+            totalRuns: autoRunParameterSetIdPerRunRef.current.length,
+            minRepeat: autoRunScheduleMinRepeatRef.current,
+            maxRepeat: autoRunScheduleMaxRepeatRef.current
+          }
         : null;
     const content = buildSessionMarkdownDoc(
       runs,
@@ -969,7 +1088,7 @@ function App() {
         completed: [...tr.completed],
         partial
       },
-      autoScheduleSnap
+      autoScheduleExport
     );
     const handle = markdownFileHandleRef.current;
     if (!handle) {
@@ -998,10 +1117,15 @@ function App() {
   const initRunSummary = useCallback((mode: SessionMode, runIndex: number, config: SessionConfig) => {
     const initial = Object.values(config.counts).reduce((sum, n) => sum + n, 0);
     const nonAmorInitial = initial - config.counts.AMOR;
+    const ids = autoRunParameterSetIdPerRunRef.current;
+    const idx = runIndex - 1;
+    const parameterSetId =
+      mode === "auto" && idx >= 0 && idx < ids.length ? (ids[idx] ?? null) : null;
     runSummariesRef.current.set(runIndex, {
       sessionId: sessionIdRef.current,
       mode,
       runIndex,
+      parameterSetId,
       status: "ongoing",
       simSeconds: 0,
       extinctionSeconds: null,
@@ -1117,6 +1241,10 @@ function App() {
       deathReasons: {}
     };
     autoRunScheduleRef.current = [];
+    autoRunParameterSetIdPerRunRef.current = [];
+    autoRunUniqueSetsRef.current = [];
+    autoRunScheduleMinRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MIN_REPEAT;
+    autoRunScheduleMaxRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MAX_REPEAT;
     sessionIdRef.current = "";
     sessionModeRef.current = null;
     currentRunIndexRef.current = 0;
@@ -1229,6 +1357,10 @@ function App() {
       deathReasons: {}
     };
     autoRunScheduleRef.current = [];
+    autoRunParameterSetIdPerRunRef.current = [];
+    autoRunUniqueSetsRef.current = [];
+    autoRunScheduleMinRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MIN_REPEAT;
+    autoRunScheduleMaxRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MAX_REPEAT;
     markdownFileHandleRef.current = null;
     markdownWriteChainRef.current = Promise.resolve();
     try {
@@ -1300,12 +1432,36 @@ function App() {
     };
 
     const parsedAutoRuns = parseIntWithClamp(setupDraft.autoRunTarget, 10, 1, 10000);
-    return { config, autoRuns: parsedAutoRuns };
+    let minRep = parseIntWithClamp(
+      setupDraft.autoScheduleMinRepeat,
+      DEFAULT_AUTO_SCHEDULE_MIN_REPEAT,
+      1,
+      500
+    );
+    let maxRep = parseIntWithClamp(
+      setupDraft.autoScheduleMaxRepeat,
+      DEFAULT_AUTO_SCHEDULE_MAX_REPEAT,
+      1,
+      500
+    );
+    if (minRep > maxRep) {
+      const t = minRep;
+      minRep = maxRep;
+      maxRep = t;
+    }
+    return { config, autoRuns: parsedAutoRuns, autoScheduleMinRepeat: minRep, autoScheduleMaxRepeat: maxRep };
   }, [setupDraft]);
 
   const startSession = useCallback(
-    async (mode: SessionMode, baseConfig: SessionConfig, autoRuns: number) => {
-      appendSetupDebug(`startSession begin: mode=${mode}, autoRuns=${autoRuns}`);
+    async (
+      mode: SessionMode,
+      baseConfig: SessionConfig,
+      opts: { autoRuns: number; autoMinRepeat: number; autoMaxRepeat: number }
+    ) => {
+      const autoRuns = opts.autoRuns;
+      appendSetupDebug(
+        `startSession begin: mode=${mode}, autoRuns=${autoRuns}, repeat=${opts.autoMinRepeat}–${opts.autoMaxRepeat}`
+      );
       await openSessionMarkdown(mode);
       setSetupOpen(false);
       setSessionMode(mode);
@@ -1316,7 +1472,24 @@ function App() {
       setExtinctionAvgSeconds(null);
       autoRunTargetRef.current = mode === "auto" ? Math.max(1, autoRuns) : 1;
       currentRunIndexRef.current = 1;
-      autoRunScheduleRef.current = mode === "auto" ? buildAutoRunSchedule(autoRunTargetRef.current) : [];
+      if (mode === "auto") {
+        const bundle = buildAutoRunSchedule(
+          autoRunTargetRef.current,
+          opts.autoMinRepeat,
+          opts.autoMaxRepeat
+        );
+        autoRunScheduleRef.current = bundle.schedule;
+        autoRunParameterSetIdPerRunRef.current = bundle.parameterSetIdPerRun;
+        autoRunUniqueSetsRef.current = bundle.uniqueSets;
+        autoRunScheduleMinRepeatRef.current = bundle.minRepeat;
+        autoRunScheduleMaxRepeatRef.current = bundle.maxRepeat;
+      } else {
+        autoRunScheduleRef.current = [];
+        autoRunParameterSetIdPerRunRef.current = [];
+        autoRunUniqueSetsRef.current = [];
+        autoRunScheduleMinRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MIN_REPEAT;
+        autoRunScheduleMaxRepeatRef.current = DEFAULT_AUTO_SCHEDULE_MAX_REPEAT;
+      }
       const runConfig =
         mode === "auto" ? autoRunScheduleRef.current[0] ?? randomSessionConfig() : baseConfig;
       resetUniverse(runConfig);
@@ -2802,18 +2975,46 @@ function App() {
                 />
               </label>
               {startupMode === "auto" ? (
-                <label>
-                  Auto runs
-                  <input
-                    type="number"
-                    min={1}
-                    value={setupDraft.autoRunTarget}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      setSetupDraft((prev) => ({ ...prev, autoRunTarget: value }));
-                    }}
-                  />
-                </label>
+                <>
+                  <label>
+                    Auto runs
+                    <input
+                      type="number"
+                      min={1}
+                      value={setupDraft.autoRunTarget}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        setSetupDraft((prev) => ({ ...prev, autoRunTarget: value }));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Min repeats per fingerprint
+                    <input
+                      type="number"
+                      min={1}
+                      max={500}
+                      value={setupDraft.autoScheduleMinRepeat}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        setSetupDraft((prev) => ({ ...prev, autoScheduleMinRepeat: value }));
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Max repeats per fingerprint
+                    <input
+                      type="number"
+                      min={1}
+                      max={500}
+                      value={setupDraft.autoScheduleMaxRepeat}
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        setSetupDraft((prev) => ({ ...prev, autoScheduleMaxRepeat: value }));
+                      }}
+                    />
+                  </label>
+                </>
               ) : null}
             </div>
             <div className="startup-actions">
@@ -2824,7 +3025,11 @@ function App() {
                   try {
                     const parsed = parseSetupSession();
                     appendSetupDebug(`start-click: pulse=${parsed.config.counts.PULSE}, max=${parsed.config.maxParticles}`);
-                    await startSession(startupMode, parsed.config, parsed.autoRuns);
+                    await startSession(startupMode, parsed.config, {
+                      autoRuns: parsed.autoRuns,
+                      autoMinRepeat: parsed.autoScheduleMinRepeat,
+                      autoMaxRepeat: parsed.autoScheduleMaxRepeat
+                    });
                   } catch (error) {
                     const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
                     appendSetupDebug(`start-click error: ${message}`);
@@ -2874,7 +3079,7 @@ function App() {
         <section className="panel">
           <div className="title-row">
             <span className="pulse-dot" />
-            <strong>Universe Game v1.3.19</strong>
+            <strong>Universe Game v1.3.20</strong>
           </div>
           <p className="dim">Particles: {particleCount} | Amor: {amorCount} | FPS: {fps}</p>
           <p className="dim">Session: {sessionMode === null ? "Not started" : sessionMode === "individual" ? "Individual" : "Auto"}</p>
